@@ -1,5 +1,7 @@
 (in-package :clrf)
 
+;;; Small dataset ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defparameter *dataset*
   '((0 . (-1d0 -2d0))
     (0 . (-2d0 -1d0))
@@ -26,117 +28,102 @@
 
 (defparameter node2 (make-node '(2 3) (dtree-root *dtree*)))
 (entropy node2)
+(gini node2)
 
 (defparameter *forest* (make-forest 4 2 *dataset2* :n-tree 1 :bagging-ratio 0.5))
-
 (traverse #'node-sample-indices (dtree-root (car (forest-dtree-list *forest*))))
-;;;;;;;;;;;;;;;;;;;; MNIST
+
+;;; MNIST ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/multiclass.html#mnist
 
 (defparameter mnist-dim 780)
 (defparameter mnist-train (clol.utils:read-data "/home/wiz/tmp/mnist.scale" mnist-dim :multiclass-p t))
 (defparameter mnist-test  (clol.utils:read-data "/home/wiz/tmp/mnist.scale.t" mnist-dim :multiclass-p t))
 
-;; Add 1 to labels because the labels of this dataset begin from 0
+;; Add 1 to labels in order to form class-labels begin from 0
 (dolist (datum mnist-train) (incf (car datum)))
 (dolist (datum mnist-test)  (incf (car datum)))
 
 (defparameter mnist-train.vec (coerce mnist-train 'vector))
 (defparameter mnist-test.vec (coerce mnist-test 'vector))
 
-(require :sb-sprof)
-
-(sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
-  (defparameter mnist-dtree (make-dtree 10 780 mnist-train.vec :max-depth 100)))
-
-(time (defparameter mnist-dtree
-        (make-dtree 10 780 (subseq mnist-train.vec 0 6000) :max-depth 5 :n-trial 10 :n-random-feature 27)))
-
-(traverse #'node-information-gain (dtree-root mnist-dtree))
-
-;; ノードに入っている数
-(traverse (lambda (node)
-            (length (node-sample-indices node)))
-          (dtree-root mnist-dtree))
-
-(sb-sprof:with-profiling (:max-samples 1000 :mode :alloc :report :flat)
-  (defparameter mnist-dtree (make-dtree 10 780 mnist-train.vec :max-depth 100)))
+(time (defparameter mnist-dtree (make-dtree 10 780 mnist-train.vec :max-depth 10 :n-trial 27)))
 
 ;; Evaluation took:
-;;   51.805 seconds of real time
-;;   51.949514 seconds of total run time (51.949514 user, 0.000000 system)
-;;   [ Run times consist of 0.165 seconds GC time, and 51.785 seconds non-GC time. ]
-;;   100.28% CPU
-;;   175,730,792,502 processor cycles
-;;   403,319,552 bytes consed
+;;   2.329 seconds of real time
+;;   2.332534 seconds of total run time (2.332534 user, 0.000000 system)
+;;   [ Run times consist of 0.027 seconds GC time, and 2.306 seconds non-GC time. ]
+;;   100.17% CPU
+;;   7,902,772,046 processor cycles
+;;   833,405,296 bytes consed
 
-;;;; prediction
-(ql:quickload :clgplot)
-(clgp:plot-histogram (class-distribution (find-leaf (dtree-root mnist-dtree) (cdr (car mnist-test)))) 10)
+(traverse #'node-information-gain (dtree-root mnist-dtree))
+;;(traverse #'node-sample-indices (dtree-root mnist-dtree))
 
-(time (defparameter mnist-dtree
-  (make-dtree 10 780 mnist-train.vec :max-depth 5 :n-trial 10)))
-
-(loop for c across (class-distribution (dtree-root mnist-dtree)) sum c)
-
-(class-distribution (make-node nil (dtree-root mnist-dtree)))
-(entropy (make-node nil (dtree-root mnist-dtree)))
-(gini (make-node nil (dtree-root mnist-dtree)))
-
-(predict-dtree mnist-dtree (cdr (car mnist-test)))
-
-(test-dtree mnist-dtree mnist-train.vec)
 (test-dtree mnist-dtree mnist-test.vec)
+;; => 75.89d0
+
+;; numbers of datapoints each node has
+(traverse (lambda (node) (length (node-sample-indices node)))
+          (dtree-root mnist-dtree))
+
+;; prediction
+(ql:quickload :clgplot)
+(clgp:plot (class-distribution (find-leaf (dtree-root mnist-dtree) (cdr (car mnist-test)))) :style 'impulse)
+(predict-dtree mnist-dtree (cdr (car mnist-test)))
 
 ;;; forest
 
-(sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
-  (defparameter mnist-forest (make-forest 10 780 mnist-train.vec :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 27)))
+(time (defparameter mnist-forest
+        (make-forest 10 780 mnist-train.vec
+                     :n-tree 100 :bagging-ratio 0.1
+                     :max-depth 10 :n-trial 27)))
 
+;; Evaluation took:
+;;   22.525 seconds of real time
+;;   22.539637 seconds of total run time (22.458771 user, 0.080866 system)
+;;   [ Run times consist of 0.557 seconds GC time, and 21.983 seconds non-GC time. ]
+;;   100.07% CPU
+;;   76,407,726,956 processor cycles
+;;   11,103,020,544 bytes consed
 
-(defparameter mnist-forest (make-forest 10 780 mnist-train.vec :n-tree 100 :bagging-ratio 0.1 :max-depth 5 :n-trial 10))
-
-(loop for x across (class-distribution-forest mnist-forest (cdr (car mnist-test))) sum x)
+;; prediction
+(clgp:plot (class-distribution-forest mnist-forest (cdr (car mnist-test))) :style 'impulse)
 (predict-forest mnist-forest (cdr (car mnist-test)))
 
-(sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
-  (test-forest mnist-forest mnist-test.vec))
+(time (print (test-forest mnist-forest mnist-test.vec)))
+
+;; => 93.43d0
+;; Evaluation took:
+;;   1.912 seconds of real time
+;;   1.914804 seconds of total run time (1.914804 user, 0.000000 system)
+;;   [ Run times consist of 0.017 seconds GC time, and 1.898 seconds non-GC time. ]
+;;   100.16% CPU
+;;   6,486,260,337 processor cycles
+;;   803,371,520 bytes consed
 
 (mapcar (lambda (dtree)
           (test-dtree dtree mnist-test.vec))
         (forest-dtree-list mnist-forest))
 
-
-(mapcar (lambda (dtree)
-          (traverse #'node-information-gain (dtree-root dtree)))
-        (forest-dtree-list mnist-forest))
-
-(mapcar (lambda (dtree)
-          (traverse (lambda (node)
-                      (length (node-sample-indices node)))
-                    (dtree-root dtree)))
-        (forest-dtree-list mnist-forest))
-
-(defparameter mnist-forest (make-forest 10 780 mnist-train.vec :n-tree 1 :bagging-ratio 1.0))
-(predict-forest mnist-forest (cdr (car mnist-test)))
-(test-forest mnist-forest mnist-test.vec)
-
-
-(defparameter mnist-forest (make-forest 10 780 mnist-train.vec :n-tree 10 :bagging-ratio 0.1 :max-depth 5 :n-trial 10))
-
-(dolist (dtree (forest-dtree-list mnist-forest))
-  (clgp:plot-histogram (class-distribution (find-leaf (dtree-root dtree) (cdr (car mnist-test)))) 10))
-
-(clgp:plot (coerce (count-class-forest mnist-forest (cdr (car mnist-test))) 'list))
-
-(test-forest mnist-forest mnist-train.vec)
-
-(defparameter sample-indices-list
-  (mapcar #'node-sample-indices (mapcar #'dtree-root (forest-dtree-list mnist-forest))))
-
-(clgp:plot (car sample-indices-list) :style 'impulses)
-(clgp:plot (cadr sample-indices-list) :style 'impulses)
+;; (66.99000000000001d0 70.59d0 69.96d0 71.12d0 70.08d0 69.89d0 69.51d0 66.9d0
+;;  69.57d0 68.49d0 70.16d0 69.1d0 69.6d0 67.7d0 70.23d0 70.98d0 66.88d0 69.16d0
+;;  71.21d0 68.38d0 69.06d0 69.89999999999999d0 69.87d0 69.82000000000001d0
+;;  69.84d0 70.17999999999999d0 70.34d0 66.95d0 70.83d0 68.22d0 69.23d0 68.16d0
+;;  68.63d0 71.04d0 68.19d0 67.86d0 68.04d0 68.56d0 69.21000000000001d0 67.97d0
+;;  69.04d0 69.39d0 67.85d0 69.57d0 69.78999999999999d0 70.17999999999999d0
+;;  67.58d0 68.89d0 67.89d0 71.57d0 69.35d0 68.02d0 68.41000000000001d0 68.2d0
+;;  71.14d0 70.88d0 70.42d0 70.73d0 68.73d0 67.57d0 70.58d0 69.67999999999999d0
+;;  70.71d0 70.57d0 70.98d0 69.12d0 69.25d0 67.95d0 70.38d0 70.58d0 70.44d0
+;;  67.92d0 69.53d0 70.59d0 68.02d0 68.83d0 70.08d0 69.28999999999999d0 71.81d0
+;;  70.8d0 69.67999999999999d0 69.35d0 71.95d0 68.19d0 69.42d0 68.60000000000001d0
+;;  68.96d0 67.73d0 70.75d0 70.14d0 68.16d0 69.58d0 70.41d0 70.03d0
+;;  68.08999999999999d0 66.79d0 72.23d0 68.05d0 68.05d0 72.14d0)
 
 ;;;;;;;;;;;;; mushrooms
+
+;; https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary.html#mushrooms
 
 (defparameter *mushrooms-dim* 112)
 (defparameter *mushrooms-train* (clol.utils:read-data "/home/wiz/datasets/mushrooms-train" *mushrooms-dim*))
@@ -155,12 +142,24 @@
 (defparameter mushrooms-train.vec (coerce *mushrooms-train* 'vector))
 (defparameter mushrooms-test.vec (coerce *mushrooms-test* 'vector))
 
+;; decision tree
+
 (defparameter mushrooms-dtree (make-dtree 2 *mushrooms-dim* mushrooms-train.vec))
 (traverse #'node-information-gain (dtree-root mushrooms-dtree))
+(test-dtree mushrooms-dtree mushrooms-test.vec)
+;; => 98.21092278719398d0
 
 (time
  (defparameter mushrooms-forest (make-forest 2 *mushrooms-dim* mushrooms-train.vec
-                                             :n-tree 500 :bagging-ratio 1.0 :n-trial 100)))
+                                             :n-tree 500 :bagging-ratio 0.2 :n-trial 10 :max-depth 5)))
+
+;; Evaluation took:
+;;   1.901 seconds of real time
+;;   1.902504 seconds of total run time (1.866545 user, 0.035959 system)
+;;   [ Run times consist of 0.084 seconds GC time, and 1.819 seconds non-GC time. ]
+;;   100.11% CPU
+;;   6,448,467,269 processor cycles
+;;   1,171,116,816 bytes consed
 
 (test-forest mushrooms-forest mushrooms-train.vec)
 (test-forest mushrooms-forest mushrooms-test.vec)
@@ -170,16 +169,6 @@
           (let ((forest (make-forest 2 *mushrooms-dim* mushrooms-train.vec :n-tree tree-size)))
             (test-forest forest mushrooms-train.vec)))
         '(5 10 25 50 75 100 200 300 400 500))
-
-;; => なぜかたまにエラー
-;; find-leafがnilになっている
-;; どういうケース？ 左右の枝のバランスが崩れている場合
-(car *dbg*)
-(traverse #'node-information-gain (dtree-root (car *dbg*)))
-(traverse #'node-sample-indices (dtree-root (car *dbg*)))
-(find-leaf (dtree-root (car *dbg*)) (cadr *dbg*))
-
-(entropy (make-node nil (dtree-root *dtree*)))
 
 ;; ;;;;;;;;;
 

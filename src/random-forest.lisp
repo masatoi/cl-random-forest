@@ -132,7 +132,6 @@
           (push elem false-list)))
     (values true-list false-list)))
 
-;; todo: left-nodeもright-nodeも毎回作るんじゃなくて中身を変更してガワは使い回す
 (defun set-best-children! (k node &optional (gain-test #'entropy))
   (declare (optimize (speed 3) (safety 1)))
   (let ((max-children-gain most-negative-double-float))
@@ -186,7 +185,6 @@
                  (traverse fn (node-left-node node))
                  (traverse fn (node-right-node node))))))
 
-(defparameter *dbg2* nil)
 (defun find-leaf (node x)
   (cond ((null node) nil)
         ((null (node-test-attribute node)) node)
@@ -256,8 +254,6 @@
                  :sample-indices (bootstrap-sample-indices
                                   (floor (* (length dataset) bagging-ratio)) dataset))))
     forest))
-
-(defparameter *dbg* nil)
 
 (defun class-distribution-forest (forest x)
   (declare (optimize (speed 3) (safety 1))
