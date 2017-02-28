@@ -11,7 +11,7 @@
   :version "0.1"
   :author ""
   :license ""
-  :depends-on (:cl-online-learning :alexandria )
+  :depends-on (:cl-online-learning :alexandria :lparallel)
   :components ((:module "src"
                 :components
                 ((:file "random-forest"))))

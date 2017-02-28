@@ -166,6 +166,7 @@
 (traverse #'node-information-gain (dtree-root mnist-dtree))
 
 (time (test-dtree mnist-dtree mnist-datamatrix mnist-target))
+(time (test-dtree mnist-dtree mnist-datamatrix-test mnist-target-test))
 ;; => 75.89d0
 
 (time
@@ -206,6 +207,22 @@
 ;;   99.97% CPU
 ;;   11,667,948,885 processor cycles
 ;;   731,683,488 bytes consed
+
+(setf lparallel:*kernel* (lparallel:make-kernel 4))
+(setf lparallel:*kernel* nil)
+
+(time (defparameter mnist-forest
+        (make-forest 10 780 mnist-datamatrix mnist-target
+                     :n-tree 500 :bagging-ratio 0.1
+                     :max-depth 10 :n-trial 27)))
+
+;; Evaluation took:
+;;   1.095 seconds of real time
+;;   4.126016 seconds of total run time (4.036967 user, 0.089049 system)
+;;   [ Run times consist of 0.064 seconds GC time, and 4.063 seconds non-GC time. ]
+;;   376.80% CPU
+;;   3,714,638,160 processor cycles
+;;   720,102,160 bytes consed
 
 ;; prediction
 (clgp:plot (class-distribution-forest mnist-forest mnist-datamatrix-test 0) :style 'impulse)

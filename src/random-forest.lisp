@@ -352,6 +352,20 @@
       (setf (aref arr i) (random len)))
     arr))
 
+
+;; (setf lparallel:*kernel* (lparallel:make-kernel 4))
+(defmacro push-ntimes (n lst &body body)
+  (let ((var (gensym)))
+    `(if lparallel:*kernel*
+         (lparallel:pdotimes (,var ,n)
+           (progn
+             ,var
+             (push (progn ,@body) ,lst)))
+         (dotimes (,var ,n)
+           (progn
+             ,var
+             (push (progn ,@body) ,lst))))))
+
 (defun make-forest (n-class datum-dim datamatrix target
                     &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
                       (n-trial 10) (gain-test #'entropy))
@@ -367,16 +381,15 @@
                  :min-region-samples min-region-samples
                  :n-trial n-trial
                  :gain-test gain-test)))
-    (setf (forest-dtree-list forest)
-          (loop repeat n-tree collect
-            (make-dtree n-class datum-dim datamatrix target
-                 :max-depth max-depth
-                 :min-region-samples min-region-samples
-                 :n-trial n-trial
-                 :gain-test gain-test
-                 :sample-indices (bootstrap-sample-indices
-                                  (floor (* (array-dimension datamatrix 0) bagging-ratio))
-                                  datamatrix))))
+    (push-ntimes n-tree (forest-dtree-list forest)
+      (make-dtree n-class datum-dim datamatrix target
+                  :max-depth max-depth
+                  :min-region-samples min-region-samples
+                  :n-trial n-trial
+                  :gain-test gain-test
+                  :sample-indices (bootstrap-sample-indices
+                                   (floor (* (array-dimension datamatrix 0) bagging-ratio))
+                                   datamatrix)))
     forest))
 
 (defun class-distribution-forest (forest datamatrix datum-index)
