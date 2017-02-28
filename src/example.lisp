@@ -15,22 +15,36 @@
     (3 . (1d0 2d0))
     (3 . (1d0 1d0))))
 
-(defparameter *dataset2*
-  (map 'vector (lambda (line)
-                 (cons (car line) (make-array 2 :element-type 'double-float :initial-contents (cdr line))))
-       *dataset*))
+(defparameter *target* (make-array (length *dataset*) :element-type 'fixnum
+                                   :initial-contents (mapcar #'car *dataset*)))
 
-(defparameter *dtree* (make-dtree 4 2 *dataset2*))
+(defparameter *datamatrix* (make-array (list (length *dataset*) 2) :element-type 'double-float))
+(loop for i from 0 below (length *dataset*)
+      for elem in *dataset*
+      do
+   (loop for j from 0 to 1 do
+     (setf (aref *datamatrix* i j)
+           (nth j (cdr elem)))))
+
+(defparameter *dtree* (make-dtree 4 2 *datamatrix* *target*))
+
+(region-min/max (make-array (array-dimension *datamatrix* 0) :element-type 'fixnum
+                            :initial-contents (alexandria:iota (array-dimension *datamatrix* 0)))
+                *datamatrix* 0)
+
+(defparameter sample-indices1
+  (make-array 10 :element-type 'fixnum :initial-contents '(0 1 2 3 4 5 6 7 8 9)))
+
+(class-distribution sample-indices1 5 *dtree*)
+(entropy sample-indices1 4 *dtree*)
+
+
 (traverse #'node-information-gain (dtree-root *dtree*))
 (traverse #'node-sample-indices (dtree-root *dtree*))
 
-(test-dtree *dtree* *dataset2*)
+(test-dtree *dtree* *datamatrix* *target*)
 
-(defparameter node2 (make-node '(2 3) (dtree-root *dtree*)))
-(entropy node2)
-(gini node2)
-
-(defparameter *forest* (make-forest 4 2 *dataset2* :n-tree 1 :bagging-ratio 0.5))
+(defparameter *forest* (make-forest 4 2 *datamatrix* *target* :n-tree 1 :bagging-ratio 0.5))
 (traverse #'node-sample-indices (dtree-root (car (forest-dtree-list *forest*))))
 
 ;;; MNIST ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -45,10 +59,30 @@
 (dolist (datum mnist-train) (incf (car datum)))
 (dolist (datum mnist-test)  (incf (car datum)))
 
-(defparameter mnist-train.vec (coerce mnist-train 'vector))
-(defparameter mnist-test.vec (coerce mnist-test 'vector))
+(defun clol-dataset->datamatrix-and-target (dataset)
+  (let* ((len (length dataset))
+         (data-dimension (length (cdar dataset)))
+         (target (make-array len :element-type 'fixnum))
+         (datamatrix (make-array (list len data-dimension) :element-type 'double-float)))
+    (loop for i from 0 to (1- len)
+          for datum in dataset
+          do
+       (setf (aref target i) (car datum))
+       (loop for j from 0 to (1- data-dimension) do
+         (setf (aref datamatrix i j) (aref (cdr datum) j))))
+    (values datamatrix target)))
 
-(time (defparameter mnist-dtree (make-dtree 10 780 mnist-train.vec :max-depth 10 :n-trial 27)))
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix-and-target mnist-train)
+  (defparameter mnist-datamatrix datamat)
+  (defparameter mnist-target target))
+
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix-and-target mnist-test)
+  (defparameter mnist-datamatrix-test datamat)
+  (defparameter mnist-target-test target))
+
+(time (defparameter mnist-dtree (make-dtree 10 780 mnist-datamatrix mnist-target :max-depth 10 :n-trial 27)))
 
 ;; Evaluation took:
 ;;   2.329 seconds of real time
@@ -58,11 +92,86 @@
 ;;   7,902,772,046 processor cycles
 ;;   833,405,296 bytes consed
 
-(traverse #'node-information-gain (dtree-root mnist-dtree))
-;;(traverse #'node-sample-indices (dtree-root mnist-dtree))
+;; Evaluation took:
+;;   1.913 seconds of real time
+;;   1.913793 seconds of total run time (1.889773 user, 0.024020 system)
+;;   [ Run times consist of 0.022 seconds GC time, and 1.892 seconds non-GC time. ]
+;;   100.05% CPU
+;;   6,488,816,835 processor cycles
+;;   834,031,648 bytes consed
 
-(test-dtree mnist-dtree mnist-test.vec)
+;; split-list => split-arr
+;; Evaluation took:
+;;   2.162 seconds of real time
+;;   2.170621 seconds of total run time (2.170621 user, 0.000000 system)
+;;   100.42% CPU
+;;   7,333,558,776 processor cycles
+;;   568,714,880 bytes consed
+
+;; with datamatrix and target
+;; Evaluation took:
+;;   1.427 seconds of real time
+;;   1.428196 seconds of total run time (1.421912 user, 0.006284 system)
+;;   [ Run times consist of 0.011 seconds GC time, and 1.418 seconds non-GC time. ]
+;;   100.07% CPU
+;;   4,841,932,737 processor cycles
+;;   566,070,512 bytes consed
+
+;; split-arr => split-sample-indices
+;; Evaluation took:
+;;   1.157 seconds of real time
+;;   1.159157 seconds of total run time (1.159157 user, 0.000000 system)
+;;   [ Run times consist of 0.008 seconds GC time, and 1.152 seconds non-GC time. ]
+;;   100.17% CPU
+;;   3,925,551,873 processor cycles
+;;   533,164,544 bytes consed
+
+;; make-random-test exploit fixed array
+;; Evaluation took:
+;;   0.587 seconds of real time
+;;   0.586155 seconds of total run time (0.578620 user, 0.007535 system)
+;;   99.83% CPU
+;;   1,988,323,468 processor cycles
+;;   16,330,528 bytes consed
+
+;; Pick 2-points in make-random-test (less accuracy)
+;; Evaluation took:
+;;   0.486 seconds of real time
+;;   0.486908 seconds of total run time (0.486908 user, 0.000000 system)
+;;   100.21% CPU
+;;   1,648,894,569 processor cycles
+;;   14,178,160 bytes consed
+
+;; safety 0
+;; Evaluation took:
+;;   0.273 seconds of real time
+;;   0.273069 seconds of total run time (0.269585 user, 0.003484 system)
+;;   [ Run times consist of 0.010 seconds GC time, and 0.264 seconds non-GC time. ]
+;;   100.00% CPU
+;;   925,629,119 processor cycles
+;;   16,496,000 bytes consed
+
+;; Pick 2-points + safety 0
+;; Evaluation took:
+;;   0.215 seconds of real time
+;;   0.215951 seconds of total run time (0.215951 user, 0.000000 system)
+;;   100.47% CPU
+;;   731,896,506 processor cycles
+;;   13,927,600 bytes consed
+
+(require 'sb-sprof)
+(sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
+  (defparameter mnist-dtree (make-dtree 10 780 mnist-datamatrix mnist-target :max-depth 10 :n-trial 270)))
+
+(traverse #'node-information-gain (dtree-root mnist-dtree))
+
+(time (test-dtree mnist-dtree mnist-datamatrix mnist-target))
 ;; => 75.89d0
+
+(time
+ (loop repeat 10 do
+   (print (test-dtree (make-dtree 10 780 mnist-datamatrix mnist-target :max-depth 10 :n-trial 27)
+                      mnist-datamatrix mnist-target))))
 
 ;; numbers of datapoints each node has
 (traverse (lambda (node) (length (node-sample-indices node)))
@@ -70,13 +179,15 @@
 
 ;; prediction
 (ql:quickload :clgplot)
-(clgp:plot (class-distribution (find-leaf (dtree-root mnist-dtree) (cdr (car mnist-test)))) :style 'impulse)
-(predict-dtree mnist-dtree (cdr (car mnist-test)))
+(clgp:plot (node-class-distribution
+            (find-leaf (dtree-root mnist-dtree) mnist-datamatrix-test 0))
+           :style 'impulse)
+(predict-dtree mnist-dtree mnist-datamatrix-test 0)
 
 ;;; forest
 
 (time (defparameter mnist-forest
-        (make-forest 10 780 mnist-train.vec
+        (make-forest 10 780 mnist-datamatrix mnist-target
                      :n-tree 100 :bagging-ratio 0.1
                      :max-depth 10 :n-trial 27)))
 
@@ -88,11 +199,21 @@
 ;;   76,407,726,956 processor cycles
 ;;   11,103,020,544 bytes consed
 
-;; prediction
-(clgp:plot (class-distribution-forest mnist-forest (cdr (car mnist-test))) :style 'impulse)
-(predict-forest mnist-forest (cdr (car mnist-test)))
+;; Evaluation took:
+;;   3.439 seconds of real time
+;;   3.438304 seconds of total run time (3.376220 user, 0.062084 system)
+;;   [ Run times consist of 0.074 seconds GC time, and 3.365 seconds non-GC time. ]
+;;   99.97% CPU
+;;   11,667,948,885 processor cycles
+;;   731,683,488 bytes consed
 
-(time (print (test-forest mnist-forest mnist-test.vec)))
+;; prediction
+(clgp:plot (class-distribution-forest mnist-forest mnist-datamatrix-test 0) :style 'impulse)
+(predict-forest mnist-forest mnist-datamatrix-test 0)
+(time (print (test-forest mnist-forest mnist-datamatrix-test mnist-target-test)))
+
+(sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
+  (time (print (test-forest mnist-forest mnist-datamatrix mnist-target))))
 
 ;; => 93.43d0
 ;; Evaluation took:
@@ -103,8 +224,15 @@
 ;;   6,486,260,337 processor cycles
 ;;   803,371,520 bytes consed
 
+;; Evaluation took:
+;;   0.744 seconds of real time
+;;   0.744223 seconds of total run time (0.744223 user, 0.000000 system)
+;;   100.00% CPU
+;;   2,524,311,970 processor cycles
+;;   72,800 bytes consed
+
 (mapcar (lambda (dtree)
-          (test-dtree dtree mnist-test.vec))
+          (test-dtree dtree mnist-datamatrix-test mnist-target-test))
         (forest-dtree-list mnist-forest))
 
 ;; (66.99000000000001d0 70.59d0 69.96d0 71.12d0 70.08d0 69.89d0 69.51d0 66.9d0
@@ -139,19 +267,28 @@
       (setf (car datum) 0)
       (setf (car datum) 1)))
 
-(defparameter mushrooms-train.vec (coerce *mushrooms-train* 'vector))
-(defparameter mushrooms-test.vec (coerce *mushrooms-test* 'vector))
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix-and-target *mushrooms-train*)
+  (defparameter mushrooms-datamatrix datamat)
+  (defparameter mushrooms-target target))
+
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix-and-target *mushrooms-test*)
+  (defparameter mushrooms-datamatrix-test datamat)
+  (defparameter mushrooms-target-test target))
 
 ;; decision tree
 
-(defparameter mushrooms-dtree (make-dtree 2 *mushrooms-dim* mushrooms-train.vec))
+(defparameter mushrooms-dtree
+  (make-dtree 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target))
 (traverse #'node-information-gain (dtree-root mushrooms-dtree))
-(test-dtree mushrooms-dtree mushrooms-test.vec)
+(test-dtree mushrooms-dtree mushrooms-datamatrix-test mushrooms-target-test)
 ;; => 98.21092278719398d0
 
 (time
- (defparameter mushrooms-forest (make-forest 2 *mushrooms-dim* mushrooms-train.vec
-                                             :n-tree 500 :bagging-ratio 0.2 :n-trial 10 :max-depth 5)))
+ (defparameter mushrooms-forest
+   (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
+                :n-tree 500 :bagging-ratio 0.2 :n-trial 10 :max-depth 10)))
 
 ;; Evaluation took:
 ;;   1.901 seconds of real time
@@ -161,14 +298,16 @@
 ;;   6,448,467,269 processor cycles
 ;;   1,171,116,816 bytes consed
 
-(test-forest mushrooms-forest mushrooms-train.vec)
-(test-forest mushrooms-forest mushrooms-test.vec)
+;; Evaluation took:
+;;   0.447 seconds of real time
+;;   0.447074 seconds of total run time (0.378886 user, 0.068188 system)
+;;   [ Run times consist of 0.157 seconds GC time, and 0.291 seconds non-GC time. ]
+;;   100.00% CPU
+;;   1,515,547,477 processor cycles
+;;   137,457,680 bytes consed
 
-(mapcar (lambda (tree-size)
-          (print tree-size)
-          (let ((forest (make-forest 2 *mushrooms-dim* mushrooms-train.vec :n-tree tree-size)))
-            (test-forest forest mushrooms-train.vec)))
-        '(5 10 25 50 75 100 200 300 400 500))
+(test-forest mushrooms-forest mushrooms-datamatrix mushrooms-target)
+(test-forest mushrooms-forest mushrooms-datamatrix-test mushrooms-target-test)
 
 ;; ;;;;;;;;;
 
@@ -308,3 +447,205 @@
 ;;   39      0   0.0      3   0.3   1000 100.0        -  "foreign function handle_trap"
 ;; ------------------------------------------------------------------------
 ;;           0   0.0                                     elsewhere
+
+
+(sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
+  (defparameter mnist-forest (make-forest 10 780 mnist-train.vec :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 27)))
+
+;; Evaluation took:
+;;   111.685 seconds of real time
+;;   111.747163 seconds of total run time (110.816033 user, 0.931130 system)
+;;   [ Run times consist of 3.490 seconds GC time, and 108.258 seconds non-GC time. ]
+;;   100.06% CPU
+;;   378,849,965,134 processor cycles
+;;   55,365,768,176 bytes consed
+
+;; safety 0
+;; Evaluation took:
+;;   95.479 seconds of real time
+;;   95.532739 seconds of total run time (94.856241 user, 0.676498 system)
+;;   [ Run times consist of 3.140 seconds GC time, and 92.393 seconds non-GC time. ]
+;;   100.06% CPU
+;;   323,879,100,523 processor cycles
+;;   55,397,321,376 bytes consed
+
+;; Evaluation took:
+;;   95.163 seconds of real time
+;;   95.201786 seconds of total run time (93.868038 user, 1.333748 system)
+;;   [ Run times consist of 2.354 seconds GC time, and 92.848 seconds non-GC time. ]
+;;   100.04% CPU
+;;   322,807,001,080 processor cycles
+;;   39,925,680,864 bytes consed
+
+(test-forest mnist-forest mnist-test.vec)
+
+;;; compile message
+
+; in: DEFUN CLASS-DISTRIBUTION
+;     (AREF (CL-RANDOM-FOREST::DTREE-DATASET CL-RANDOM-FOREST::DTREE)
+;           CL-RANDOM-FOREST::DATUM-INDEX)
+; ==>
+;   (SB-KERNEL:HAIRY-DATA-VECTOR-REF/CHECK-BOUNDS ARRAY SB-INT:INDEX)
+; 
+; note: unable to
+;   optimize
+; because:
+;   Upgraded element type of array is not known at compile time.
+
+; in: DEFUN MAKE-RANDOM-TEST
+;     (RANDOM (CL-RANDOM-FOREST::DTREE-DATUM-DIM CL-RANDOM-FOREST::DTREE))
+; 
+; note: unable to
+;   Use inline float operations.
+; due to type uncertainty:
+;   The first argument is a (OR (SINGLE-FLOAT (0.0)) (DOUBLE-FLOAT (0.0d0))
+;                               (INTEGER 1)), not a SINGLE-FLOAT.
+; 
+; note: unable to
+;   Use inline float operations.
+; due to type uncertainty:
+;   The first argument is a (OR (SINGLE-FLOAT (0.0)) (DOUBLE-FLOAT (0.0d0))
+;                               (INTEGER 1)), not a DOUBLE-FLOAT.
+
+;     (= MIN MAX)
+; 
+; note: unable to
+;   open-code FLOAT to RATIONAL comparison
+; due to type uncertainty:
+;   The first argument is a NUMBER, not a FLOAT.
+;   The second argument is a NUMBER, not a RATIONAL.
+; 
+; note: unable to open code because: The operands might not be the same type.
+
+;     (LOOP CL-RANDOM-FOREST::FOR CL-RANDOM-FOREST::INDEX CL-RANDOM-FOREST::ACROSS CL-RANDOM-FOREST::INDICES
+;           CL-RANDOM-FOREST::COLLECT (AREF
+;                                      (CDR
+;                                       (AREF
+;                                        (CL-RANDOM-FOREST::DTREE-DATASET
+;                                         CL-RANDOM-FOREST::DTREE)
+;                                        CL-RANDOM-FOREST::INDEX))
+;                                      CL-RANDOM-FOREST::ATTRIBUTE))
+; --> BLOCK LET SB-LOOP::WITH-LOOP-LIST-COLLECTION-HEAD LET* 
+; --> SB-LOOP::LOOP-BODY TAGBODY SB-LOOP::LOOP-REALLY-DESETQ SETQ THE 
+; --> AREF 
+; ==>
+;   (SB-KERNEL:HAIRY-DATA-VECTOR-REF/CHECK-BOUNDS ARRAY SB-INT:INDEX)
+; 
+; note: unable to
+;   optimize
+; because:
+;   Upgraded element type of array is not known at compile time.
+
+;     (AREF (CL-RANDOM-FOREST::DTREE-DATASET CL-RANDOM-FOREST::DTREE)
+;           CL-RANDOM-FOREST::INDEX)
+; ==>
+;   (SB-KERNEL:HAIRY-DATA-VECTOR-REF/CHECK-BOUNDS ARRAY SB-INT:INDEX)
+; 
+; note: unable to
+;   optimize
+; because:
+;   Upgraded element type of array is not known at compile time.
+
+;     (AREF
+;      (CDR
+;       (AREF (CL-RANDOM-FOREST::DTREE-DATASET CL-RANDOM-FOREST::DTREE)
+;             CL-RANDOM-FOREST::INDEX))
+;      CL-RANDOM-FOREST::ATTRIBUTE)
+; ==>
+;   (SB-KERNEL:HAIRY-DATA-VECTOR-REF/CHECK-BOUNDS ARRAY SB-INT:INDEX)
+; 
+; note: unable to
+;   optimize
+; because:
+;   Upgraded element type of array is not known at compile time.
+
+;     (= MIN MAX)
+; 
+; note: forced to do GENERIC-= (cost 10)
+;       unable to do inline float comparison (cost 3) because:
+;       The first argument is a T, not a DOUBLE-FLOAT.
+;       The second argument is a T, not a (COMPLEX DOUBLE-FLOAT).
+;       unable to do inline float comparison (cost 3) because:
+;       The first argument is a T, not a (COMPLEX DOUBLE-FLOAT).
+;       The second argument is a T, not a (COMPLEX DOUBLE-FLOAT).
+;       etc.
+
+
+;; Profiler sample vector full (289 traces / 10000 samples), doubling the size
+;; Profiler sample vector full (577 traces / 20000 samples), doubling the size
+
+;; Number of samples:   1000
+;; Sample interval:     0.01 seconds
+;; Total sampling time: 10.0 seconds
+;; Number of cycles:    0
+;; Sampled threads:
+;;  #<SB-THREAD:THREAD "repl-thread" RUNNING {1002DAFFA3}>
+
+;;            Self        Total        Cumul
+;;   Nr  Count     %  Count     %  Count     %    Calls  Function
+;; ------------------------------------------------------------------------
+;;    1    262  26.2    262  26.2    262  26.2        -  RUN-TEST
+;;    2    152  15.2    455  45.5    414  41.4        -  MAKE-RANDOM-TEST
+;;    3    152  15.2    152  15.2    566  56.6        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-REF DOUBLE-FLOAT)
+;;    4     48   4.8     48   4.8    614  61.4        -  SB-KERNEL:HAIRY-DATA-VECTOR-REF/CHECK-BOUNDS
+;;    5     46   4.6     68   6.8    660  66.0        -  CLASS-DISTRIBUTION
+;;    6     45   4.5     45   4.5    705  70.5        -  SB-KERNEL:TWO-ARG-<
+;;    7     37   3.7    354  35.4    742  74.2        -  SPLIT-ARR
+;;    8     33   3.3     33   3.3    775  77.5        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-REF T)
+;;    9     30   3.0     30   3.0    805  80.5        -  SB-KERNEL:TWO-ARG->
+;;   10     26   2.6     46   4.6    831  83.1        -  (FLET TEST-FUNC :IN SET-BEST-CHILDREN!)
+;;   11     21   2.1    105  10.5    852  85.2        -  MIN/MAX
+;;   12     20   2.0     97   9.7    872  87.2        -  SB-VM::GENERIC-+
+;;   13     19   1.9    145  14.5    891  89.1        -  ENTROPY
+;;   14     10   1.0     10   1.0    901  90.1        -  SB-KERNEL:TWO-ARG-+
+;;   15     10   1.0     10   1.0    911  91.1        -  "foreign function pthread_sigmask"
+;;   16      9   0.9      9   0.9    920  92.0        -  SB-KERNEL:%COERCE-CALLABLE-TO-FUN
+;;   17      7   0.7     12   1.2    927  92.7        -  SB-KERNEL:TWO-ARG-*
+;;   18      6   0.6     10   1.0    933  93.3        -  SB-KERNEL::INTEGER-/-INTEGER
+;;   19      6   0.6      7   0.7    939  93.9        -  RANDOM
+;;   20      5   0.5      5   0.5    944  94.4        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-REF FIXNUM)
+;;   21      4   0.4    996  99.6    948  94.8        -  SET-BEST-CHILDREN!
+;;   22      4   0.4      4   0.4    952  95.2        -  SB-KERNEL:TWO-ARG-GCD
+;;   23      3   0.3      7   0.7    955  95.5        -  COPY-TMP->BEST!
+;;   24      3   0.3      3   0.3    958  95.8        -  LOG
+;;   25      2   0.2    999  99.9    960  96.0        -  MAKE-DTREE
+;;   26      2   0.2      2   0.2    962  96.2        -  SB-KERNEL:TWO-ARG-=
+;;   27      2   0.2      2   0.2    964  96.4        -  SB-KERNEL:FLOAT-FORMAT-DIGITS
+;;   28      1   0.1      6   0.6    965  96.5        -  SB-KERNEL:%DOUBLE-FLOAT
+;;   29      1   0.1      1   0.1    966  96.6        -  ASH
+;;   30      1   0.1      1   0.1    967  96.7        -  MAKE-PARTIAL-ARR
+;;   31      1   0.1      1   0.1    968  96.8        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-SET FIXNUM)
+;;   32      1   0.1      1   0.1    969  96.9        -  TRUNCATE
+;;   33      1   0.1      1   0.1    970  97.0        -  SB-KERNEL::RANDOM-MT19937-UPDATE
+;;   34      0   0.0   1000 100.0    970  97.0        -  MAKE-FOREST
+;;   35      0   0.0   1000 100.0    970  97.0        -  "Unknown component: #x1001EF8E80"
+;;   36      0   0.0   1000 100.0    970  97.0        -  SB-INT:SIMPLE-EVAL-IN-LEXENV
+;;   37      0   0.0   1000 100.0    970  97.0        -  EVAL
+;;   38      0   0.0   1000 100.0    970  97.0        -  SWANK::EVAL-REGION
+;;   39      0   0.0   1000 100.0    970  97.0        -  (LAMBDA NIL :IN SWANK-REPL::REPL-EVAL)
+;;   40      0   0.0   1000 100.0    970  97.0        -  SWANK-REPL::TRACK-PACKAGE
+;;   41      0   0.0   1000 100.0    970  97.0        -  SWANK::CALL-WITH-RETRY-RESTART
+;;   42      0   0.0   1000 100.0    970  97.0        -  SWANK::CALL-WITH-BUFFER-SYNTAX
+;;   43      0   0.0   1000 100.0    970  97.0        -  SWANK-REPL::REPL-EVAL
+;;   44      0   0.0   1000 100.0    970  97.0        -  SWANK:EVAL-FOR-EMACS
+;;   45      0   0.0   1000 100.0    970  97.0        -  SWANK::PROCESS-REQUESTS
+;;   46      0   0.0   1000 100.0    970  97.0        -  (LAMBDA NIL :IN SWANK::HANDLE-REQUESTS)
+;;   47      0   0.0   1000 100.0    970  97.0        -  SWANK/SBCL::CALL-WITH-BREAK-HOOK
+;;   48      0   0.0   1000 100.0    970  97.0        -  (FLET SWANK/BACKEND:CALL-WITH-DEBUGGER-HOOK :IN "/home/wiz/.roswell/lisp/quicklisp/dists/quicklisp/software/slime-v2.18/swank/sbcl.lisp")
+;;   49      0   0.0   1000 100.0    970  97.0        -  SWANK::CALL-WITH-BINDINGS
+;;   50      0   0.0   1000 100.0    970  97.0        -  SWANK::HANDLE-REQUESTS
+;;   51      0   0.0   1000 100.0    970  97.0        -  (FLET #:WITHOUT-INTERRUPTS-BODY-1139 :IN SB-THREAD::INITIAL-THREAD-FUNCTION-TRAMPOLINE)
+;;   52      0   0.0   1000 100.0    970  97.0        -  (FLET SB-THREAD::WITH-MUTEX-THUNK :IN SB-THREAD::INITIAL-THREAD-FUNCTION-TRAMPOLINE)
+;;   53      0   0.0   1000 100.0    970  97.0        -  (FLET #:WITHOUT-INTERRUPTS-BODY-359 :IN SB-THREAD::CALL-WITH-MUTEX)
+;;   54      0   0.0   1000 100.0    970  97.0        -  SB-THREAD::CALL-WITH-MUTEX
+;;   55      0   0.0   1000 100.0    970  97.0        -  SB-THREAD::INITIAL-THREAD-FUNCTION-TRAMPOLINE
+;;   56      0   0.0   1000 100.0    970  97.0        -  "foreign function call_into_lisp"
+;;   57      0   0.0   1000 100.0    970  97.0        -  "foreign function new_thread_trampoline"
+;;   58      0   0.0    997  99.7    970  97.0        -  SPLIT-NODE!
+;;   59      0   0.0     10   1.0    970  97.0        -  "foreign function interrupt_handle_pending"
+;;   60      0   0.0     10   1.0    970  97.0        -  "foreign function handle_trap"
+;;   61      0   0.0      4   0.4    970  97.0        -  SB-KERNEL::FLOAT-RATIO
+;;   62      0   0.0      4   0.4    970  97.0        -  RANDOM-UNIFORM
+;;   63      0   0.0      1   0.1    970  97.0        -  BOOTSTRAP-SAMPLE-INDICES
+;; ------------------------------------------------------------------------
+;;          30   3.0                                     elsewhere
