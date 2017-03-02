@@ -26,7 +26,7 @@
      (setf (aref *datamatrix* i j)
            (nth j (cdr elem)))))
 
-(defparameter *dtree* (make-dtree 4 2 *datamatrix* *target*))
+(defparameter *dtree* (make-dtree 4 2 *datamatrix* *target* :gain-test #'gini))
 
 (region-min/max (make-array (array-dimension *datamatrix* 0) :element-type 'fixnum
                             :initial-contents (alexandria:iota (array-dimension *datamatrix* 0)))
@@ -208,12 +208,14 @@
 ;;   11,667,948,885 processor cycles
 ;;   731,683,488 bytes consed
 
+
+;;; Parallelizaion
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
-(setf lparallel:*kernel* nil)
+;; (setf lparallel:*kernel* nil)
 
 (time (defparameter mnist-forest
         (make-forest 10 780 mnist-datamatrix mnist-target
-                     :n-tree 500 :bagging-ratio 0.1
+                     :n-tree 100 :bagging-ratio 0.1
                      :max-depth 10 :n-trial 27)))
 
 ;; Evaluation took:
@@ -305,7 +307,7 @@
 (time
  (defparameter mushrooms-forest
    (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
-                :n-tree 500 :bagging-ratio 0.2 :n-trial 10 :max-depth 10)))
+                :n-tree 100 :bagging-ratio 0.1 :n-trial 10 :max-depth 10)))
 
 ;; Evaluation took:
 ;;   1.901 seconds of real time
@@ -323,10 +325,42 @@
 ;;   1,515,547,477 processor cycles
 ;;   137,457,680 bytes consed
 
+;; Evaluation took:
+;;   0.018 seconds of real time
+;;   0.059598 seconds of total run time (0.059598 user, 0.000000 system)
+;;   333.33% CPU
+;;   60,858,259 processor cycles
+;;   28,202,128 bytes consed
+
 (test-forest mushrooms-forest mushrooms-datamatrix mushrooms-target)
 (test-forest mushrooms-forest mushrooms-datamatrix-test mushrooms-target-test)
 
-;; ;;;;;;;;;
+;;;;;;;;;;;; covtype
+
+(defparameter covtype-dim 54)
+(defparameter covtype-train (clol.utils:read-data "/home/wiz/datasets/covtype.libsvm.binary.scale" covtype-dim))
+
+(dolist (datum covtype-train)
+  (if (> (car datum) 1d0)
+      (setf (car datum) 0)
+      (setf (car datum) 1)))
+
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix-and-target covtype-train)
+  (defparameter covtype-datamatrix datamat)
+  (defparameter covtype-target target))
+
+;; (setf lparallel:*kernel* (lparallel:make-kernel 4))
+
+(time
+ (defparameter covtype-forest
+   (make-forest 2 covtype-dim covtype-datamatrix covtype-target
+                :n-tree 100 :bagging-ratio 0.1 :n-trial 10 :max-depth 10)))
+
+(time (print (test-forest covtype-forest covtype-datamatrix covtype-target)))
+(time (print (predict-forest covtype-forest covtype-datamatrix 0)))
+
+;;;;;;;;;;;;;;;;;;;;
 
 ;; CL-RF> (sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
 ;;   (defparameter mnist-forest (make-forest 10 780 mnist-train.vec :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 27)))

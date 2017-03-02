@@ -101,11 +101,20 @@
                       (length (node-sample-indices node))
                       (node-dtree node)))
 
-;; (defun gini (node)
-;;   (* -1d0
-;;      (loop for pk double-float across (class-distribution node)
-;;            summing
-;;            (* pk (- 1d0 pk)))))
+(defun gini (sample-indices terminate-index dtree)
+  (let ((dist (class-distribution sample-indices terminate-index dtree))
+        (sum 0d0)
+        (n-class (dtree-n-class dtree)))
+    (declare (optimize (speed 3) (safety 0))
+             (type (simple-array fixnum) sample-indices)
+             (type (simple-array double-float) dist)
+             (type fixnum terminate-index n-class)
+             (type double-float sum))
+    (loop for i fixnum from 0 to (1- n-class) do
+      (let ((pk (aref dist i)))
+        (declare (type (double-float 0d0) pk))
+        (setf sum (+ sum (* pk (- 1d0 pk))))))
+    (* -1d0 sum)))
 
 (defun entropy (sample-indices terminate-index dtree)
   (let ((dist (class-distribution sample-indices terminate-index dtree))
@@ -124,19 +133,6 @@
                          0d0
                          (* pk (log pk)))))))
     (* -1d0 sum)))
-
-(defun node-entropy (node)
-  (entropy (node-sample-indices node)
-           (length (node-sample-indices node))
-           (node-dtree node)))
-
-(defun min/max (lst)
-  (let ((min (car lst))
-        (max (car lst)))
-    (dolist (elem (cdr lst))
-      (cond ((< max elem) (setf max elem))
-            ((> min elem) (setf min elem))))
-    (values min max)))
 
 (defun region-min/max (sample-indices datamatrix attribute)
   (let ((min (aref datamatrix (aref sample-indices 0) attribute))
@@ -172,8 +168,8 @@
         (declare (type double-float threshold))
         (values attribute threshold)))))
 
-;; ;; Pick 2 points from sample-indices, then random sampling between them.
-;; ;; faster, but less accuracy
+;; Pick 2 points from sample-indices, then random sampling between them.
+;; faster, but less accuracy
 ;; (defun make-random-test (node)
 ;;   (let* ((dtree (node-dtree node))
 ;;          (datamatrix (dtree-datamatrix dtree))
