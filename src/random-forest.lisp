@@ -23,7 +23,9 @@
 (defun make-dtree (n-class datum-dim datamatrix target
                    &key (max-depth 5) (min-region-samples 1) (n-trial 10)
                      (gain-test #'entropy) sample-indices)
-  (let* ((len (array-dimension datamatrix 0))
+  (let* ((len (if sample-indices
+                  (length sample-indices)
+                  (array-dimension datamatrix 0)))
          (dtree (%make-dtree
                  :n-class n-class
                  :class-count-array (make-array n-class :element-type 'double-float)
@@ -405,7 +407,7 @@
         (declare (type (simple-array double-float) dist))
         (loop for i fixnum from 0 to (1- n-class) do
           (incf (aref class-count-array i) (aref dist i)))))
-    ;;
+    ;; divide by n-tree
     (loop for i fixnum from 0 to (1- n-class) do
       (setf (aref class-count-array i)
             (/ (aref class-count-array i) n-tree)))
@@ -434,3 +436,6 @@
                (aref target i))
         (incf counter)))
     (* 100d0 (/ counter len))))
+
+;;; Global refinement
+
