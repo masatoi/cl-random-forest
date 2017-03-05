@@ -36,16 +36,40 @@
   (make-array 10 :element-type 'fixnum :initial-contents '(0 1 2 3 4 5 6 7 8 9)))
 
 (class-distribution sample-indices1 5 *dtree*)
-(entropy sample-indices1 4 *dtree*)
-
+(entropy sample-indices1 (length sample-indices1) *dtree*)
 
 (traverse #'node-information-gain (dtree-root *dtree*))
 (traverse #'node-sample-indices (dtree-root *dtree*))
 
+(do-leaf (lambda (node)
+           (format t "~%leaf-index: ~A, sample-indices: ~A"
+                   (node-leaf-index node)
+                   (node-sample-indices node)))
+  (dtree-root *dtree*))
+
+(set-leaf-index! *dtree*)
+
+(dtree-max-leaf-index *dtree*)
+
+(traverse #'node-leaf-index (dtree-root *dtree*))
+
 (test-dtree *dtree* *datamatrix* *target*)
 
-(defparameter *forest* (make-forest 4 2 *datamatrix* *target* :n-tree 1 :bagging-ratio 0.5))
+(defparameter *forest* (make-forest 4 2 *datamatrix* *target* :n-tree 3 :bagging-ratio 0.5))
 (traverse #'node-sample-indices (dtree-root (car (forest-dtree-list *forest*))))
+
+(test-forest *forest* *datamatrix* *target*)
+
+(set-leaf-index-forest! *forest*)
+
+(loop for i from 0 to (1- (array-dimension *datamatrix* 0)) do
+  (print (clol.vector:sparse-vector-index-vector
+          (make-forest-sparse-vector *forest* *datamatrix* i))))
+
+(defparameter *forest-learner* (make-forest-learner *forest*))
+
+(train-forest-learner! *forest* *forest-learner* *datamatrix* *target*)
+(test-forest-learner *forest* *forest-learner* *datamatrix* *target*)
 
 ;;; MNIST ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -59,30 +83,19 @@
 (dolist (datum mnist-train) (incf (car datum)))
 (dolist (datum mnist-test)  (incf (car datum)))
 
-(defun clol-dataset->datamatrix-and-target (dataset)
-  (let* ((len (length dataset))
-         (data-dimension (length (cdar dataset)))
-         (target (make-array len :element-type 'fixnum))
-         (datamatrix (make-array (list len data-dimension) :element-type 'double-float)))
-    (loop for i from 0 to (1- len)
-          for datum in dataset
-          do
-       (setf (aref target i) (car datum))
-       (loop for j from 0 to (1- data-dimension) do
-         (setf (aref datamatrix i j) (aref (cdr datum) j))))
-    (values datamatrix target)))
-
 (multiple-value-bind (datamat target)
-    (clol-dataset->datamatrix-and-target mnist-train)
+    (clol-dataset->datamatrix/target mnist-train)
   (defparameter mnist-datamatrix datamat)
   (defparameter mnist-target target))
 
 (multiple-value-bind (datamat target)
-    (clol-dataset->datamatrix-and-target mnist-test)
+    (clol-dataset->datamatrix/target mnist-test)
   (defparameter mnist-datamatrix-test datamat)
   (defparameter mnist-target-test target))
 
 (time (defparameter mnist-dtree (make-dtree 10 780 mnist-datamatrix mnist-target :max-depth 10 :n-trial 27)))
+
+;; (write-to-r-format-from-clol-dataset mnist-train "/home/wiz/datasets/mnist-for-R")
 
 ;; Evaluation took:
 ;;   2.329 seconds of real time
@@ -161,7 +174,7 @@
 
 (require 'sb-sprof)
 (sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
-  (defparameter mnist-dtree (make-dtree 10 780 mnist-datamatrix mnist-target :max-depth 10 :n-trial 270)))
+  (defparameter mnist-dtree (make-dtree 10 780 mnist-datamatrix mnist-target :max-depth 5 :n-trial 270)))
 
 (traverse #'node-information-gain (dtree-root mnist-dtree))
 
@@ -187,10 +200,34 @@
 
 ;;; forest
 
+;; 2.19 sec
 (time (defparameter mnist-forest
         (make-forest 10 780 mnist-datamatrix mnist-target
-                     :n-tree 100 :bagging-ratio 0.1
-                     :max-depth 10 :n-trial 27)))
+                     :n-tree 500 :bagging-ratio 0.1
+                     :max-depth 10 :n-trial 10 :min-region-samples 5)))
+
+(time (print (test-forest mnist-forest mnist-datamatrix mnist-target)))
+(time (print (test-forest mnist-forest mnist-datamatrix-test mnist-target-test)))
+
+;; 18.952 seconds
+(time (defparameter mnist-refine-dataset
+        (make-refine-dataset mnist-forest mnist-datamatrix mnist-target)))
+
+;; 3.286 seconds
+(time (defparameter mnist-refine-test
+        (make-refine-dataset mnist-forest mnist-datamatrix-test mnist-target-test)))
+
+(defparameter mnist-refine-learner (make-refine-learner mnist-forest 1.0d0))
+(defparameter mnist-refine-learner (make-refine-learner-scw mnist-forest 0.999d0 0.01d0))
+
+;; 23.396 seconds
+(time
+ (loop repeat 10 do
+   (clol:train mnist-refine-learner mnist-refine-dataset)
+   (clol:test  mnist-refine-learner mnist-refine-test)))
+
+(clol:test  mnist-refine-learner mnist-refine-dataset)
+(predict-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix-test 0)
 
 ;; Evaluation took:
 ;;   22.525 seconds of real time
@@ -207,7 +244,6 @@
 ;;   99.97% CPU
 ;;   11,667,948,885 processor cycles
 ;;   731,683,488 bytes consed
-
 
 ;;; Parallelizaion
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
@@ -229,7 +265,20 @@
 ;; prediction
 (clgp:plot (class-distribution-forest mnist-forest mnist-datamatrix-test 0) :style 'impulse)
 (predict-forest mnist-forest mnist-datamatrix-test 0)
+(time (print (test-forest mnist-forest mnist-datamatrix mnist-target)))
 (time (print (test-forest mnist-forest mnist-datamatrix-test mnist-target-test)))
+
+(time (defparameter mnist-forest
+        (make-forest 10 780 mnist-datamatrix mnist-target
+                     :n-tree 500 :bagging-ratio 1.0
+                     :max-depth 10 :n-trial 27)))
+
+;; train
+;; 53.616 seconds
+
+;; predict
+;; train 99.885d0   58.639 seconds
+;; test  96.65d0    9.791 seconds
 
 (sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
   (time (print (test-forest mnist-forest mnist-datamatrix mnist-target))))
@@ -296,6 +345,11 @@
   (defparameter mushrooms-datamatrix-test datamat)
   (defparameter mushrooms-target-test target))
 
+
+
+(write-to-r-format-from-clol-dataset *mushrooms-train* "/home/wiz/datasets/mushrooms-for-R")
+(write-to-r-format-from-clol-dataset *mushrooms-test* "/home/wiz/datasets/mushrooms-for-R.t")
+
 ;; decision tree
 
 (defparameter mushrooms-dtree
@@ -305,9 +359,10 @@
 ;; => 98.21092278719398d0
 
 (time
- (defparameter mushrooms-forest
-   (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
-                :n-tree 100 :bagging-ratio 0.1 :n-trial 10 :max-depth 10)))
+ (loop repeat 100 do
+   (defparameter mushrooms-forest
+     (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
+                  :n-tree 100 :bagging-ratio 0.1 :n-trial 10 :max-depth 10))))
 
 ;; Evaluation took:
 ;;   1.901 seconds of real time

@@ -12,7 +12,8 @@
   n-class class-count-array datum-dim datamatrix target
   root max-depth min-region-samples n-trial gain-test
   tmp-arr1 tmp-index1 tmp-arr2 tmp-index2
-  best-arr1 best-index1 best-arr2 best-index2)
+  best-arr1 best-index1 best-arr2 best-index2
+  max-leaf-index)
 
 (defun %print-dtree (obj stream)
   (format stream "#S(DTREE :N-CLASS ~A :DATUM-DIM ~A :ROOT ~A)"
@@ -50,7 +51,8 @@
 (defstruct (node (:constructor %make-node)
                  (:print-object %print-node))
   sample-indices depth test-attribute test-threshold information-gain 
-  left-node right-node dtree)
+  left-node right-node dtree
+  leaf-index)
 
 (defun %print-node (obj stream)
   (format stream "#S(NODE :TEST ~A :GAIN ~A)"
@@ -294,6 +296,16 @@
                  (traverse fn (node-left-node node))
                  (traverse fn (node-right-node node))))))
 
+(defun do-leaf (fn node)
+  (cond ((null node) nil)
+        ((and (null (node-left-node node))
+              (null (node-right-node node)))
+         (funcall fn node))
+        ((null (node-left-node node)) (do-leaf fn (node-right-node node)))
+        ((null (node-right-node node)) (do-leaf fn (node-left-node node)))
+        (t (do-leaf fn (node-left-node node))
+           (do-leaf fn (node-right-node node)))))
+
 (defun find-leaf (node datamatrix datum-index)
   (declare (optimize (speed 3) (safety 0))
            (type fixnum datum-index)
@@ -337,7 +349,9 @@
 (defstruct (forest (:constructor %make-forest)
                    (:print-object %print-forest))
   n-tree bagging-ratio datamatrix target dtree-list
-  n-class class-count-array datum-dim max-depth min-region-samples n-trial gain-test)
+  n-class class-count-array datum-dim max-depth min-region-samples n-trial gain-test
+  ;; fore global refinement
+  index-offset leaf-indices)
 
 (defun %print-forest (obj stream)
   (format stream "#S(FOREST :N-TREE ~A)"
@@ -378,7 +392,9 @@
                  :max-depth max-depth
                  :min-region-samples min-region-samples
                  :n-trial n-trial
-                 :gain-test gain-test)))
+                 :gain-test gain-test
+                 :index-offset (make-array n-tree :element-type 'fixnum :initial-element 0)
+                 :leaf-indices (make-array n-tree :element-type 'fixnum :initial-element 0))))
     (push-ntimes n-tree (forest-dtree-list forest)
       (make-dtree n-class datum-dim datamatrix target
                   :max-depth max-depth
@@ -438,4 +454,77 @@
     (* 100d0 (/ counter len))))
 
 ;;; Global refinement
+
+(defun make-refine-vector (forest datamatrix datum-index)
+  (let ((leaf-indices (forest-leaf-indices forest))
+        (index-offset (forest-index-offset forest))
+        (n-tree (forest-n-tree forest)))
+    (declare (optimize (speed 3) (safety 0))
+             (type (simple-array double-float) datamatrix)
+             (type (simple-array fixnum) leaf-indices index-offset)
+             (type fixnum datum-index n-tree))
+    ;; TODO: Parallelizaion
+    (loop for i fixnum from 0 to (1- n-tree)
+          for dtree in (forest-dtree-list forest)
+          do
+             (setf (aref leaf-indices i)
+                   (node-leaf-index (find-leaf (dtree-root dtree) datamatrix datum-index))))
+    
+    (let ((sv-index (make-array (forest-n-tree forest) :element-type 'fixnum))
+          (sv-val (make-array (forest-n-tree forest)
+                              :element-type 'double-float :initial-element 1d0)))
+      (declare (type (simple-array fixnum) sv-index)
+               (type (simple-array double-float) sv-val))
+      (loop for i fixnum from 0 to (1- n-tree) do
+        (setf (aref sv-index i) (+ (aref leaf-indices i) (aref index-offset i))))
+      (clol.vector:make-sparse-vector sv-index sv-val))))
+
+(defun set-leaf-index! (dtree)
+  (setf (dtree-max-leaf-index dtree) 0)
+  (do-leaf (lambda (node)
+             (setf (node-leaf-index node) (dtree-max-leaf-index dtree))
+             (incf (dtree-max-leaf-index dtree)))
+    (dtree-root dtree)))
+
+(defun set-leaf-index-forest! (forest)
+  (let ((sum 0)
+        (offset (forest-index-offset forest)))
+    (set-leaf-index! (car (forest-dtree-list forest)))
+    (setf (aref offset 0) 0)
+    (loop for dtree in (cdr (forest-dtree-list forest))
+          for i from 1 to (1- (forest-n-tree forest))
+          do
+             (set-leaf-index! dtree)
+             (setf sum (+ sum (dtree-max-leaf-index dtree)))
+             (setf (aref offset i) sum))))
+
+(defun make-refine-dataset (forest datamatrix target)
+  (set-leaf-index-forest! forest)
+  (let ((product nil))
+    (loop for i from 0 to (1- (array-dimension datamatrix 0)) do
+      (push (cons (aref target i)
+                  (make-refine-vector forest datamatrix i))
+            product))
+    (nreverse product)))
+
+(defun make-refine-learner (forest &optional (gamma 10d0))
+  (clol:make-one-vs-rest
+   (loop for n-leaves in (mapcar #'dtree-max-leaf-index (forest-dtree-list forest))
+         sum n-leaves)
+   (forest-n-class forest)
+   'sparse-arow gamma))
+
+(defun make-refine-learner-scw (forest &optional (eta 0.99d0) (C 0.1d0))
+  (clol:make-one-vs-rest
+   (loop for n-leaves in (mapcar #'dtree-max-leaf-index (forest-dtree-list forest))
+         sum n-leaves)
+   (forest-n-class forest)
+   'sparse-scw eta C))
+
+(defun predict-refine-learner (forest refine-learner datamatrix datum-index)
+  (clol:one-vs-rest-predict
+   refine-learner
+   (make-refine-vector forest datamatrix datum-index)))
+
+;;; Global pruning
 
