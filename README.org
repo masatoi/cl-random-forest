@@ -1,5 +1,7 @@
 * cl-random-forest
 
+A implementation of Random Forest with pure Common Lisp. It also includes a implementation of Global Refinement of Random Forest (Ren, Cao, Wei and Sun. "Global Refinement of Random Forest" CVPR2015).
+
 ** Installation
 In quicklisp's local-projects directory,
 
