@@ -15,7 +15,7 @@
                (setf (aref datamatrix i j) (aref (cdr datum) j))))
     (values datamatrix target)))
 
-;;; write
+;;; write for R
 
 (defun format-datum (datum stream)
   (format stream "class~A" (car datum))

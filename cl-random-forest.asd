@@ -9,16 +9,17 @@
 
 (defsystem cl-random-forest
   :version "0.1"
-  :author ""
-  :license ""
+  :author "Satoshi Imai"
+  :license "MIT"
   :depends-on (:cl-online-learning :alexandria :lparallel)
   :components ((:module "src"
                 :components
-                ((:file "random-forest"))))
-  :description ""
+                ((:file "random-forest")
+                 (:file "utils"))))
+  :description "Random Forest and Global Refinement for Common Lisp"
   :long-description
   #.(with-open-file (stream (merge-pathnames
-                             #p"README.markdown"
+                             #p"README.org"
                              (or *load-pathname* *compile-file-pathname*))
                             :if-does-not-exist nil
                             :direction :input)

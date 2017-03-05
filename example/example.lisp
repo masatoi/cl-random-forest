@@ -76,23 +76,24 @@
 ;; https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/multiclass.html#mnist
 
 (defparameter mnist-dim 780)
-(defparameter mnist-train (clol.utils:read-data "/home/wiz/tmp/mnist.scale" mnist-dim :multiclass-p t))
-(defparameter mnist-test  (clol.utils:read-data "/home/wiz/tmp/mnist.scale.t" mnist-dim :multiclass-p t))
 
-;; Add 1 to labels in order to form class-labels begin from 0
-(dolist (datum mnist-train) (incf (car datum)))
-(dolist (datum mnist-test)  (incf (car datum)))
+(let ((mnist-train (clol.utils:read-data "/home/wiz/tmp/mnist.scale" mnist-dim :multiclass-p t))
+      (mnist-test (clol.utils:read-data "/home/wiz/tmp/mnist.scale.t" mnist-dim :multiclass-p t)))
 
-(multiple-value-bind (datamat target)
-    (clol-dataset->datamatrix/target mnist-train)
-  (defparameter mnist-datamatrix datamat)
-  (defparameter mnist-target target))
+  ;; Add 1 to labels in order to form class-labels begin from 0
+  (dolist (datum mnist-train) (incf (car datum)))
+  (dolist (datum mnist-test)  (incf (car datum)))
 
-(multiple-value-bind (datamat target)
-    (clol-dataset->datamatrix/target mnist-test)
-  (defparameter mnist-datamatrix-test datamat)
-  (defparameter mnist-target-test target))
-
+  (multiple-value-bind (datamat target)
+      (clol-dataset->datamatrix/target mnist-train)
+    (defparameter mnist-datamatrix datamat)
+    (defparameter mnist-target target))
+  
+  (multiple-value-bind (datamat target)
+      (clol-dataset->datamatrix/target mnist-test)
+    (defparameter mnist-datamatrix-test datamat)
+    (defparameter mnist-target-test target)))
+  
 (time (defparameter mnist-dtree (make-dtree 10 780 mnist-datamatrix mnist-target :max-depth 10 :n-trial 27)))
 
 ;; (write-to-r-format-from-clol-dataset mnist-train "/home/wiz/datasets/mnist-for-R")
@@ -175,8 +176,6 @@
 (require 'sb-sprof)
 (sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
   (defparameter mnist-dtree (make-dtree 10 780 mnist-datamatrix mnist-target :max-depth 5 :n-trial 270)))
-
-(traverse #'node-information-gain (dtree-root mnist-dtree))
 
 (time (test-dtree mnist-dtree mnist-datamatrix mnist-target))
 (time (test-dtree mnist-dtree mnist-datamatrix-test mnist-target-test))
