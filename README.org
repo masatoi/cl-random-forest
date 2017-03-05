@@ -1,5 +1,25 @@
 * cl-random-forest
 
-** Usage
-
 ** Installation
+In quicklisp's local-projects directory,
+
+#+BEGIN_SRC 
+git clone https://github.com/masatoi/cl-random-forest.git
+#+END_SRC
+
+In Lisp,
+
+#+BEGIN_SRC lisp
+(ql:quickload :cl-random-forest)
+#+END_SRC
+
+When using Roswell,
+
+#+BEGIN_SRC 
+ros install masatoi/cl-random-forest
+#+END_SRC
+
+** Usage
+See example.
+
+
