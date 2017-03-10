@@ -13,7 +13,7 @@
   root max-depth min-region-samples n-trial gain-test
   tmp-arr1 tmp-index1 tmp-arr2 tmp-index2
   best-arr1 best-index1 best-arr2 best-index2
-  max-leaf-index)
+  max-leaf-index id)
 
 (defun %print-dtree (obj stream)
   (format stream "#S(DTREE :N-CLASS ~A :DATUM-DIM ~A :ROOT ~A)"
@@ -52,7 +52,7 @@
                  (:print-object %print-node))
   sample-indices depth test-attribute test-threshold information-gain 
   left-node right-node dtree
-  leaf-index)
+  leaf-index leaf-weight)
 
 (defun %print-node (obj stream)
   (format stream "#S(NODE :TEST ~A :GAIN ~A)"
@@ -351,7 +351,7 @@
   n-tree bagging-ratio datamatrix target dtree-list
   n-class class-count-array datum-dim max-depth min-region-samples n-trial gain-test
   ;; fore global refinement
-  index-offset leaf-indices)
+  index-offset)
 
 (defun %print-forest (obj stream)
   (format stream "#S(FOREST :N-TREE ~A)"
@@ -393,8 +393,8 @@
                  :min-region-samples min-region-samples
                  :n-trial n-trial
                  :gain-test gain-test
-                 :index-offset (make-array n-tree :element-type 'fixnum :initial-element 0)
-                 :leaf-indices (make-array n-tree :element-type 'fixnum :initial-element 0))))
+                 :index-offset (make-array n-tree :element-type 'fixnum :initial-element 0))))
+    ;; make dtree list
     (push-ntimes n-tree (forest-dtree-list forest)
       (make-dtree n-class datum-dim datamatrix target
                   :max-depth max-depth
@@ -404,6 +404,10 @@
                   :sample-indices (bootstrap-sample-indices
                                    (floor (* (array-dimension datamatrix 0) bagging-ratio))
                                    datamatrix)))
+    ;; set dtree-id
+    (loop for dtree in (forest-dtree-list forest)
+          for i from 0
+          do (setf (dtree-id dtree) i))
     forest))
 
 (defun class-distribution-forest (forest datamatrix datum-index)
@@ -455,47 +459,58 @@
 
 ;;; Global refinement
 
+(defmacro mapcar/pmapcar (fn lst)
+  `(if lparallel:*kernel*
+       (lparallel:pmapcar ,fn ,lst)
+       (mapcar ,fn ,lst)))
+
 (defun make-refine-vector (forest datamatrix datum-index)
-  (let ((leaf-indices (forest-leaf-indices forest))
-        (index-offset (forest-index-offset forest))
+  (let ((index-offset (forest-index-offset forest))
         (n-tree (forest-n-tree forest)))
     (declare (optimize (speed 3) (safety 0))
              (type (simple-array double-float) datamatrix)
-             (type (simple-array fixnum) leaf-indices index-offset)
+             (type (simple-array fixnum) index-offset)
              (type fixnum datum-index n-tree))
-    ;; TODO: Parallelizaion
-    (loop for i fixnum from 0 to (1- n-tree)
-          for dtree in (forest-dtree-list forest)
-          do
-             (setf (aref leaf-indices i)
-                   (node-leaf-index (find-leaf (dtree-root dtree) datamatrix datum-index))))
-    
-    (let ((sv-index (make-array (forest-n-tree forest) :element-type 'fixnum))
-          (sv-val (make-array (forest-n-tree forest)
-                              :element-type 'double-float :initial-element 1d0)))
-      (declare (type (simple-array fixnum) sv-index)
-               (type (simple-array double-float) sv-val))
-      (loop for i fixnum from 0 to (1- n-tree) do
-        (setf (aref sv-index i) (+ (aref leaf-indices i) (aref index-offset i))))
-      (clol.vector:make-sparse-vector sv-index sv-val))))
+    (let ((leaf-index-weight-pairs
+            (mapcar/pmapcar
+             (lambda (dtree)
+               (let ((node (find-leaf (dtree-root dtree) datamatrix datum-index)))
+                 (cons (node-leaf-index node)
+                       (node-leaf-weight node))))
+             (forest-dtree-list forest))))
+      (let ((sv-index (make-array (forest-n-tree forest) :element-type 'fixnum))
+            (sv-val (make-array (forest-n-tree forest)
+                                :element-type 'double-float :initial-element 1d0)))
+        (declare (type (simple-array fixnum) sv-index)
+                 (type (simple-array double-float) sv-val))
+        (loop for i fixnum from 0 to (1- n-tree)
+              for index-weight-pair in leaf-index-weight-pairs
+              do (let ((index (car index-weight-pair))
+                       (weight (cdr index-weight-pair)))
+                   (declare (type fixnum index)
+                            (type double-float weight))
+                   (setf (aref sv-index i) (+ index (aref index-offset i))
+                         (aref sv-val i) weight)))
+        (clol.vector:make-sparse-vector sv-index sv-val)))))
 
 (defun set-leaf-index! (dtree)
   (setf (dtree-max-leaf-index dtree) 0)
   (do-leaf (lambda (node)
              (setf (node-leaf-index node) (dtree-max-leaf-index dtree))
+             (if (null (node-leaf-weight node))
+                 (setf (node-leaf-weight node) 1d0))
              (incf (dtree-max-leaf-index dtree)))
     (dtree-root dtree)))
 
 (defun set-leaf-index-forest! (forest)
+  (dolist (dtree (forest-dtree-list forest))
+    (set-leaf-index! dtree))
   (let ((sum 0)
         (offset (forest-index-offset forest)))
-    (set-leaf-index! (car (forest-dtree-list forest)))
     (setf (aref offset 0) 0)
-    (loop for dtree in (cdr (forest-dtree-list forest))
+    (loop for dtree in (forest-dtree-list forest)
           for i from 1 to (1- (forest-n-tree forest))
-          do
-             (set-leaf-index! dtree)
-             (setf sum (+ sum (dtree-max-leaf-index dtree)))
+          do (setf sum (+ sum (dtree-max-leaf-index dtree)))
              (setf (aref offset i) sum))))
 
 (defun make-refine-dataset (forest datamatrix target)
@@ -528,3 +543,73 @@
 
 ;;; Global pruning
 
+(defun make-l2-norm-arr (mulc)
+  (let* ((dim (clol::one-vs-rest-input-dimension mulc))
+         (arr (make-array dim :element-type 'double-float :initial-element 0d0)))
+    (loop for i from 0 to (1- (clol::one-vs-rest-n-class mulc)) do
+      (let* ((learner (svref (clol::one-vs-rest-learners-vector mulc) i))
+             (weight-vec (funcall (clol::one-vs-rest-learner-weight mulc) learner)))
+        (loop for j from 0 to (1- dim) do
+          (setf (aref arr j) (+ (aref arr j) (* (aref weight-vec j)
+                                                (aref weight-vec j)))))))
+    arr))
+
+;; Find leaf-parent
+
+(defun leaf? (node)
+  (node-leaf-index node))
+
+(defun collect-leaf-parent (forest)
+  (let ((parent-list nil))
+    (labels ((push-parent-node (node)
+               (cond ((null node) nil)
+                     ((and (leaf? (node-left-node node)) (leaf? (node-right-node node)))
+                      (push node parent-list))
+                     ((leaf? (node-left-node node))  (push-parent-node (node-right-node node)))
+                     ((leaf? (node-right-node node)) (push-parent-node (node-left-node node)))
+                     (t (push-parent-node (node-left-node node))
+                        (push-parent-node (node-right-node node))))))
+      (dolist (dtree (forest-dtree-list forest))
+        (push-parent-node (dtree-root dtree)))
+      parent-list)))
+
+;; Sort by L2 norm of children
+
+(defun children-l2-norm (node l2-norm-arr forest)
+  (let* ((left-leaf-index (node-leaf-index (node-left-node node)))
+         (right-leaf-index (node-leaf-index (node-right-node node)))
+         (dtree-index (dtree-id (node-dtree node)))
+         (offset (aref (forest-index-offset forest) dtree-index))
+         (left-leaf-norm (aref l2-norm-arr (+ left-leaf-index offset)))
+         (right-leaf-norm (aref l2-norm-arr (+ right-leaf-index offset))))
+    (+ left-leaf-norm right-leaf-norm)))
+
+(defun collect-leaf-parent-sorted (forest mulc)
+  (let ((l2-norm-arr (make-l2-norm-arr mulc))
+        (leaf-parent (collect-leaf-parent forest)))
+    (sort leaf-parent
+          (lambda (node1 node2)
+            (< (children-l2-norm node1 l2-norm-arr forest)
+               (children-l2-norm node2 l2-norm-arr forest))))))
+
+;; Delete non-significant nodes
+
+(defun delete-children! (node)
+  ;; update leaf-weight
+  (setf (node-leaf-weight node)
+        (+ (node-leaf-weight (node-left-node node))
+           (node-leaf-weight (node-right-node node))))
+  ;; delete children
+  (setf (node-test-attribute node) nil
+        (node-test-threshold node) nil
+        (node-left-node node) nil
+        (node-right-node node) nil)
+  node)
+
+(defun pruning! (forest mulc &optional (pruning-rate 0.1))
+  (let* ((leaf-parents (collect-leaf-parent-sorted forest mulc))
+         (pruning-size (floor (* (length leaf-parents) pruning-rate))))
+    (loop for i from 0 to (1- pruning-size)
+          for node in leaf-parents
+          do (delete-children! node))
+    (set-leaf-index-forest! mnist-forest)))

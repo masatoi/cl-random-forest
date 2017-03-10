@@ -55,7 +55,7 @@
 
 (test-dtree *dtree* *datamatrix* *target*)
 
-(defparameter *forest* (make-forest 4 2 *datamatrix* *target* :n-tree 3 :bagging-ratio 0.5))
+(defparameter *forest* (make-forest 4 2 *datamatrix* *target* :n-tree 10 :bagging-ratio 1.0))
 (traverse #'node-sample-indices (dtree-root (car (forest-dtree-list *forest*))))
 
 (test-forest *forest* *datamatrix* *target*)
@@ -66,10 +66,18 @@
   (print (clol.vector:sparse-vector-index-vector
           (make-forest-sparse-vector *forest* *datamatrix* i))))
 
-(defparameter *forest-learner* (make-forest-learner *forest*))
+(defparameter *forest-learner* (make-refine-learner *forest*))
+(defparameter *forest-refine-dataset* (make-refine-dataset *forest* *datamatrix* *target*))
+(clol:train *forest-learner* *forest-refine-dataset*)
+(clol:test *forest-learner* *forest-refine-dataset*)
 
-(train-forest-learner! *forest* *forest-learner* *datamatrix* *target*)
-(test-forest-learner *forest* *forest-learner* *datamatrix* *target*)
+(defparameter *forest-parent-list* (collect-leaf-parent *forest*))
+
+(defparameter deleted-parent
+  (delete-children! (car (collect-leaf-parent-sorted *forest* *forest-learner*))))
+
+(pruning *forest* *forest-learner* 0.2)
+
 
 ;;; MNIST ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -335,16 +343,14 @@
       (setf (car datum) 1)))
 
 (multiple-value-bind (datamat target)
-    (clol-dataset->datamatrix-and-target *mushrooms-train*)
+    (clol-dataset->datamatrix/target *mushrooms-train*)
   (defparameter mushrooms-datamatrix datamat)
   (defparameter mushrooms-target target))
 
 (multiple-value-bind (datamat target)
-    (clol-dataset->datamatrix-and-target *mushrooms-test*)
+    (clol-dataset->datamatrix/target *mushrooms-test*)
   (defparameter mushrooms-datamatrix-test datamat)
   (defparameter mushrooms-target-test target))
-
-
 
 (write-to-r-format-from-clol-dataset *mushrooms-train* "/home/wiz/datasets/mushrooms-for-R")
 (write-to-r-format-from-clol-dataset *mushrooms-test* "/home/wiz/datasets/mushrooms-for-R.t")
@@ -358,10 +364,9 @@
 ;; => 98.21092278719398d0
 
 (time
- (loop repeat 100 do
-   (defparameter mushrooms-forest
-     (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
-                  :n-tree 100 :bagging-ratio 0.1 :n-trial 10 :max-depth 10))))
+ (defparameter mushrooms-forest
+   (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
+                :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10)))
 
 ;; Evaluation took:
 ;;   1.901 seconds of real time
@@ -388,6 +393,16 @@
 
 (test-forest mushrooms-forest mushrooms-datamatrix mushrooms-target)
 (test-forest mushrooms-forest mushrooms-datamatrix-test mushrooms-target-test)
+
+(time
+ (defparameter mushrooms-refine-dataset
+   (make-refine-dataset mushrooms-forest mushrooms-datamatrix mushrooms-target)))
+
+(time
+ (defparameter mushrooms-refine-test
+   (make-refine-dataset mushrooms-forest mushrooms-datamatrix-test mushrooms-target-test)))
+
+(defparameter mushrooms-refine-learner (make-refine-learner mushrooms-forest 1.0d0))
 
 ;;;;;;;;;;;; covtype
 
