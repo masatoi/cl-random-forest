@@ -541,16 +541,31 @@
 
 ;;; Global pruning
 
-(defun make-l2-norm-arr (mulc)
-  (let* ((dim (clol::one-vs-rest-input-dimension mulc))
+(defmacro square (x)
+  `(* ,x ,x))
+
+(defun make-l2-norm-multiclass (learner)
+  (let* ((dim (clol::one-vs-rest-input-dimension learner))
          (arr (make-array dim :element-type 'double-float :initial-element 0d0)))
-    (loop for i from 0 to (1- (clol::one-vs-rest-n-class mulc)) do
-      (let* ((learner (svref (clol::one-vs-rest-learners-vector mulc) i))
-             (weight-vec (funcall (clol::one-vs-rest-learner-weight mulc) learner)))
+    (loop for i from 0 to (1- (clol::one-vs-rest-n-class learner)) do
+      (let* ((sub-learner (svref (clol::one-vs-rest-learners-vector learner) i))
+             (weight-vec (funcall (clol::one-vs-rest-learner-weight learner) sub-learner)))
         (loop for j from 0 to (1- dim) do
-          (setf (aref arr j) (+ (aref arr j) (* (aref weight-vec j)
-                                                (aref weight-vec j)))))))
+          (setf (aref arr j) (+ (aref arr j) (square (aref weight-vec j)))))))
     arr))
+
+(defun make-l2-norm-binary (learner)
+  (let* ((dim (clol::sparse-arow-input-dimension learner))
+         (arr (make-array dim :element-type 'double-float :initial-element 0d0))
+         (weight-vec (clol::sparse-arow-weight learner)))
+    (loop for i from 0 to (1- dim) do
+      (setf (aref arr i) (square (aref weight-vec i))))
+    arr))
+
+(defun make-l2-norm (learner)
+  (etypecase learner
+    (cl-online-learning::one-vs-rest (make-l2-norm-multiclass learner))
+    (cl-online-learning::sparse-arow (make-l2-norm-binary learner))))
 
 ;; Find leaf-parent
 
@@ -582,8 +597,8 @@
          (right-leaf-norm (aref l2-norm-arr (+ right-leaf-index offset))))
     (+ left-leaf-norm right-leaf-norm)))
 
-(defun collect-leaf-parent-sorted (forest mulc)
-  (let ((l2-norm-arr (make-l2-norm-arr mulc))
+(defun collect-leaf-parent-sorted (forest learner)
+  (let ((l2-norm-arr (make-l2-norm learner))
         (leaf-parent (collect-leaf-parent forest)))
     (sort leaf-parent
           (lambda (node1 node2)
@@ -604,11 +619,10 @@
         (node-right-node node) nil)
   node)
 
-(defun pruning! (forest mulc &optional (pruning-rate 0.1))
-  (let* ((leaf-parents (collect-leaf-parent-sorted forest mulc))
+(defun pruning! (forest learner &optional (pruning-rate 0.1))
+  (let* ((leaf-parents (collect-leaf-parent-sorted forest learner))
          (pruning-size (floor (* (length leaf-parents) pruning-rate))))
     (loop for i from 0 to (1- pruning-size)
           for node in leaf-parents
           do (delete-children! node))
-    (set-leaf-index-forest! mnist-forest)))
-
+    (set-leaf-index-forest! forest)))
