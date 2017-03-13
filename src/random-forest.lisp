@@ -350,7 +350,7 @@
                    (:print-object %print-forest))
   n-tree bagging-ratio datamatrix target dtree-list
   n-class class-count-array datum-dim max-depth min-region-samples n-trial gain-test
-  ;; fore global refinement
+  ;; for global refinement
   index-offset)
 
 (defun %print-forest (obj stream)
@@ -408,6 +408,8 @@
     (loop for dtree in (forest-dtree-list forest)
           for i from 0
           do (setf (dtree-id dtree) i))
+    ;; set leaf-id
+    (set-leaf-index-forest! forest)
     forest))
 
 (defun class-distribution-forest (forest datamatrix datum-index)
@@ -514,27 +516,23 @@
              (setf (aref offset i) sum))))
 
 (defun make-refine-dataset (forest datamatrix target)
-  (set-leaf-index-forest! forest)
-  (let ((product nil))
+  (let ((binary? (= (forest-n-class forest) 2))
+        (product nil))
     (loop for i from 0 to (1- (array-dimension datamatrix 0)) do
-      (push (cons (aref target i)
+      (push (cons (if binary?
+                      (if (= (aref target i) 0) -1.0d0 1.0d0)
+                      (aref target i))
                   (make-refine-vector forest datamatrix i))
             product))
     (nreverse product)))
 
 (defun make-refine-learner (forest &optional (gamma 10d0))
-  (clol:make-one-vs-rest
-   (loop for n-leaves in (mapcar #'dtree-max-leaf-index (forest-dtree-list forest))
-         sum n-leaves)
-   (forest-n-class forest)
-   'sparse-arow gamma))
-
-(defun make-refine-learner-scw (forest &optional (eta 0.99d0) (C 0.1d0))
-  (clol:make-one-vs-rest
-   (loop for n-leaves in (mapcar #'dtree-max-leaf-index (forest-dtree-list forest))
-         sum n-leaves)
-   (forest-n-class forest)
-   'sparse-scw eta C))
+  (let ((n-class (forest-n-class forest))
+        (input-dim (loop for n-leaves in (mapcar #'dtree-max-leaf-index (forest-dtree-list forest))
+                         sum n-leaves)))
+    (if (> n-class 2)
+      (clol:make-one-vs-rest input-dim n-class 'sparse-arow gamma)
+      (clol:make-sparse-arow input-dim gamma))))
 
 (defun predict-refine-learner (forest refine-learner datamatrix datum-index)
   (clol:one-vs-rest-predict
@@ -613,3 +611,4 @@
           for node in leaf-parents
           do (delete-children! node))
     (set-leaf-index-forest! mnist-forest)))
+

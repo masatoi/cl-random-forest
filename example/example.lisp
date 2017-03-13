@@ -366,7 +366,12 @@
 (time
  (defparameter mushrooms-forest
    (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
-                :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10)))
+                :n-tree 500 :bagging-ratio 0.5 :min-region-samples 5 :n-trial 10 :max-depth 5)))
+
+(time
+ (defparameter mushrooms-forest
+   (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
+                :n-tree 100 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 5)))
 
 ;; Evaluation took:
 ;;   1.901 seconds of real time
@@ -403,6 +408,11 @@
    (make-refine-dataset mushrooms-forest mushrooms-datamatrix-test mushrooms-target-test)))
 
 (defparameter mushrooms-refine-learner (make-refine-learner mushrooms-forest 1.0d0))
+
+(time
+ (loop repeat 10 do
+   (clol:train mushrooms-refine-learner mushrooms-refine-dataset)
+   (clol:test  mushrooms-refine-learner mushrooms-refine-test)))
 
 ;;;;;;;;;;;; covtype
 
