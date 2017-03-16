@@ -117,7 +117,10 @@
     (loop for i fixnum from 0 to (1- n-class) do
       (let ((pk (aref dist i)))
         (declare (type (double-float 0d0) pk))
-        (setf sum (+ sum (* pk (- 1d0 pk))))))
+        (setf sum (+ sum
+                     (if (= pk 0d0)
+                         0d0
+                         (* pk (- 1d0 pk)))))))
     (* -1d0 sum)))
 
 (defun entropy (sample-indices terminate-index dtree)
@@ -534,10 +537,29 @@
       (clol:make-one-vs-rest input-dim n-class 'sparse-arow gamma)
       (clol:make-sparse-arow input-dim gamma))))
 
+(defun update-refine-learner (forest refine-learner datamatrix target datum-index)
+  (clol::one-vs-rest-update refine-learner
+                            (make-refine-vector forest datamatrix datum-index)
+                            (aref target datum-index)))
+
+(defun train-refine-learner (forest refine-learner datamatrix target)
+  (loop for i fixnum from 0 to (1- (array-dimension datamatrix 0)) do
+    (update-refine-learner forest refine-learner datamatrix target i)))
+
 (defun predict-refine-learner (forest refine-learner datamatrix datum-index)
-  (clol:one-vs-rest-predict
-   refine-learner
-   (make-refine-vector forest datamatrix datum-index)))
+  (clol:one-vs-rest-predict refine-learner
+                            (make-refine-vector forest datamatrix datum-index)))
+
+(defun test-refine-learner (forest refine-learner datamatrix target &key quiet-p)
+  (let* ((len (array-dimension datamatrix 0))
+         (n-correct
+           (loop for i from 0 to (1- len)
+                 count (= (predict-refine-learner forest refine-learner datamatrix i)
+                          (aref target i))))
+         (accuracy (* (/ n-correct len) 100.0)))
+    (if (not quiet-p)
+        (format t "Accuracy: ~f%, Correct: ~A, Total: ~A~%" accuracy n-correct len))
+    (values accuracy n-correct len)))
 
 ;;; Global pruning
 

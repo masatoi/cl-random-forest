@@ -36,7 +36,7 @@
 ;; 6.238 seconds (1 core), 2.195 seconds (4 core)
 (defparameter mnist-forest
   (make-forest mnist-n-class mnist-dim mnist-datamatrix mnist-target
-               :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5))
+               :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5 :gain-test #'gini))
 
 ;; 5.223 seconds, Accuracy: 93.38%
 (test-forest mnist-forest mnist-datamatrix-test mnist-target-test)
@@ -67,6 +67,10 @@
 (loop repeat 5 do
   (clol:train mnist-refine-learner mnist-refine-dataset)
   (clol:test  mnist-refine-learner mnist-refine-test))
+
+;; In case of without making dataset
+(time (train-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix mnist-target))
+(time (test-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix-test mnist-target-test))
 
 ;; Make a prediction
 (predict-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix-test 0)

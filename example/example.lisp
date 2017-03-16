@@ -358,7 +358,7 @@
 ;; decision tree
 
 (defparameter mushrooms-dtree
-  (make-dtree 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target))
+  (make-dtree 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target :max-depth 20))
 (traverse #'node-information-gain (dtree-root mushrooms-dtree))
 (test-dtree mushrooms-dtree mushrooms-datamatrix-test mushrooms-target-test)
 ;; => 98.21092278719398d0
@@ -366,12 +366,12 @@
 (time
  (defparameter mushrooms-forest
    (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
-                :n-tree 500 :bagging-ratio 0.5 :min-region-samples 5 :n-trial 10 :max-depth 5)))
+                :n-tree 500 :bagging-ratio 1.0 :min-region-samples 1 :n-trial 10 :max-depth 10)))
 
 (time
  (defparameter mushrooms-forest
    (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
-                :n-tree 100 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 5)))
+                :n-tree 100 :bagging-ratio 1.0 :min-region-samples 1 :n-trial 10 :max-depth 10)))
 
 ;; Evaluation took:
 ;;   1.901 seconds of real time
@@ -414,7 +414,22 @@
    (clol:train mushrooms-refine-learner mushrooms-refine-dataset)
    (clol:test  mushrooms-refine-learner mushrooms-refine-test)))
 
-;;;;;;;;;;;; covtype
+;; pruning
+(length (collect-leaf-parent mushrooms-forest)) ; => 1691
+(pruning! mushrooms-forest mushrooms-refine-learner 0.1)
+(length (collect-leaf-parent mushrooms-forest)) ; => 1614
+
+;; Re-learning refine learner
+(defparameter mushrooms-refine-dataset
+  (make-refine-dataset mushrooms-forest mushrooms-datamatrix mushrooms-target))
+(defparameter mushrooms-refine-test
+  (make-refine-dataset mushrooms-forest mushrooms-datamatrix-test mushrooms-target-test))
+(defparameter mushrooms-refine-learner (make-refine-learner mushrooms-forest))
+(loop repeat 5 do
+  (clol:train mushrooms-refine-learner mushrooms-refine-dataset)
+  (clol:test  mushrooms-refine-learner mushrooms-refine-test))
+
+;;;;;;;;;;;; covtype.binary
 
 (defparameter covtype-dim 54)
 (defparameter covtype-train (clol.utils:read-data "/home/wiz/datasets/covtype.libsvm.binary.scale" covtype-dim))
@@ -425,7 +440,7 @@
       (setf (car datum) 1)))
 
 (multiple-value-bind (datamat target)
-    (clol-dataset->datamatrix-and-target covtype-train)
+    (clol-dataset->datamatrix/target covtype-train)
   (defparameter covtype-datamatrix datamat)
   (defparameter covtype-target target))
 
@@ -434,348 +449,216 @@
 (time
  (defparameter covtype-forest
    (make-forest 2 covtype-dim covtype-datamatrix covtype-target
-                :n-tree 100 :bagging-ratio 0.1 :n-trial 10 :max-depth 10)))
+                :n-tree 500 :bagging-ratio 0.1 :n-trial 10 :max-depth 5)))
 
 (time (print (test-forest covtype-forest covtype-datamatrix covtype-target)))
 (time (print (predict-forest covtype-forest covtype-datamatrix 0)))
 
+;; heap exhaust
+(defparameter covtype-refine-dataset (make-refine-dataset covtype-forest covtype-datamatrix covtype-target))
+(defparameter covtype-refine-test (make-refine-dataset covtype-forest covtype-datamatrix-test covtype-target-test))
+(defparameter covtype-refine-learner (make-refine-learner covtype-forest 1.0d0))
+(loop repeat 10 do
+  (clol:train covtype-refine-learner covtype-refine-dataset)
+  (clol:test  covtype-refine-learner covtype-refine-test))
+
 ;;;;;;;;;;;;;;;;;;;;
 
-;; CL-RF> (sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
-;;   (defparameter mnist-forest (make-forest 10 780 mnist-train.vec :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 27)))
-;; Profiler sample vector full (290 traces / 10000 samples), doubling the size
-;; Profiler sample vector full (579 traces / 20000 samples), doubling the size
+;;; a1a
 
-;; Number of samples:   1000
-;; Sample interval:     0.01 seconds
-;; Total sampling time: 10.0 seconds
-;; Number of cycles:    0
-;; Sampled threads:
-;;  #<SB-THREAD:THREAD "repl-thread" RUNNING {1003017FA3}>
+(defparameter a1a-dim 123)
+(defparameter a1a-train (clol.utils:read-data "/home/wiz/datasets/a1a" a1a-dim))
+(defparameter a1a-test (clol.utils:read-data "/home/wiz/datasets/a1a.t" a1a-dim))
 
-;;            Self        Total        Cumul
-;;   Nr  Count     %  Count     %  Count     %    Calls  Function
-;; ------------------------------------------------------------------------
-;;    1    238  23.8    238  23.8    238  23.8        -  RUN-TEST
-;;    2    172  17.2    172  17.2    410  41.0        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-REF DOUBLE-FLOAT)
-;;    3    145  14.5    427  42.7    555  55.5        -  MAKE-RANDOM-TEST
-;;    4     65   6.5     88   8.8    620  62.0        -  CLASS-DISTRIBUTION
-;;    5     49   4.9    347  34.7    669  66.9        -  SPLIT-LIST
-;;    6     40   4.0     40   4.0    709  70.9        -  SB-KERNEL:TWO-ARG-<
-;;    7     36   3.6     36   3.6    745  74.5        -  SB-KERNEL:HAIRY-DATA-VECTOR-REF/CHECK-BOUNDS
-;;    8     31   3.1     52   5.2    776  77.6        -  (LAMBDA (INDEX) :IN SET-BEST-CHILDREN!)
-;;    9     31   3.1     31   3.1    807  80.7        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-REF T)
-;;   10     28   2.8     28   2.8    835  83.5        -  SB-KERNEL:TWO-ARG-+
-;;   11     21   2.1     21   2.1    856  85.6        -  SB-KERNEL:TWO-ARG->
-;;   12     20   2.0     20   2.0    876  87.6        -  LENGTH
-;;   13     15   1.5     77   7.7    891  89.1        -  MIN/MAX
-;;   14     12   1.2     72   7.2    903  90.3        -  SB-VM::GENERIC-+
-;;   15      9   0.9      9   0.9    912  91.2        -  "foreign function pthread_sigmask"
-;;   16      9   0.9      9   0.9    921  92.1        -  SB-KERNEL:TWO-ARG-*
-;;   17      6   0.6    165  16.5    927  92.7        -  ENTROPY
-;;   18      6   0.6     10   1.0    933  93.3        -  SB-KERNEL::INTEGER-/-INTEGER
-;;   19      6   0.6      6   0.6    939  93.9        -  %MAKE-NODE
-;;   20      6   0.6      6   0.6    945  94.5        -  SB-KERNEL:%COERCE-CALLABLE-TO-FUN
-;;   21      5   0.5    997  99.7    950  95.0        -  SET-BEST-CHILDREN!
-;;   22      5   0.5      5   0.5    955  95.5        -  SB-KERNEL:TWO-ARG-GCD
-;;   23      3   0.3      3   0.3    958  95.8        -  LOG
-;;   24      3   0.3      3   0.3    961  96.1        -  RANDOM
-;;   25      2   0.2      7   0.7    963  96.3        -  SB-KERNEL:%DOUBLE-FLOAT
-;;   26      2   0.2      2   0.2    965  96.5        -  MAKE-NODE
-;;   27      1   0.1      2   0.2    966  96.6        -  SB-KERNEL::FLOAT-RATIO
-;;   28      1   0.1      1   0.1    967  96.7        -  SCALE-FLOAT
-;;   29      1   0.1      1   0.1    968  96.8        -  SB-KERNEL:TWO-ARG-/
-;;   30      1   0.1      1   0.1    969  96.9        -  SB-KERNEL:TWO-ARG--
-;;   31      1   0.1      1   0.1    970  97.0        -  ASH
-;;   32      1   0.1      1   0.1    971  97.1        -  (LABELS SB-KERNEL::FLOAT-AND-SCALE :IN SB-KERNEL::FLOAT-RATIO)
-;;   33      0   0.0   1000 100.0    971  97.1        -  SPLIT-NODE!
-;;   34      0   0.0   1000 100.0    971  97.1        -  MAKE-DTREE
-;;   35      0   0.0   1000 100.0    971  97.1        -  MAKE-FOREST
-;;   36      0   0.0   1000 100.0    971  97.1        -  "Unknown component: #x102282D860"
-;;   37      0   0.0   1000 100.0    971  97.1        -  SB-INT:SIMPLE-EVAL-IN-LEXENV
-;;   38      0   0.0   1000 100.0    971  97.1        -  EVAL
-;;   39      0   0.0   1000 100.0    971  97.1        -  SWANK::EVAL-REGION
-;;   40      0   0.0   1000 100.0    971  97.1        -  (LAMBDA NIL :IN SWANK-REPL::REPL-EVAL)
-;;   41      0   0.0   1000 100.0    971  97.1        -  SWANK-REPL::TRACK-PACKAGE
-;;   42      0   0.0   1000 100.0    971  97.1        -  SWANK::CALL-WITH-RETRY-RESTART
-;;   43      0   0.0   1000 100.0    971  97.1        -  SWANK::CALL-WITH-BUFFER-SYNTAX
-;;   44      0   0.0   1000 100.0    971  97.1        -  SWANK-REPL::REPL-EVAL
-;;   45      0   0.0   1000 100.0    971  97.1        -  SWANK:EVAL-FOR-EMACS
-;;   46      0   0.0   1000 100.0    971  97.1        -  SWANK::PROCESS-REQUESTS
-;;   47      0   0.0   1000 100.0    971  97.1        -  (LAMBDA NIL :IN SWANK::HANDLE-REQUESTS)
-;;   48      0   0.0   1000 100.0    971  97.1        -  SWANK/SBCL::CALL-WITH-BREAK-HOOK
-;;   49      0   0.0   1000 100.0    971  97.1        -  (FLET SWANK/BACKEND:CALL-WITH-DEBUGGER-HOOK :IN "/home/wiz/.roswell/lisp/quicklisp/dists/quicklisp/software/slime-v2.18/swank/sbcl.lisp")
-;;   50      0   0.0   1000 100.0    971  97.1        -  SWANK::CALL-WITH-BINDINGS
-;;   51      0   0.0   1000 100.0    971  97.1        -  SWANK::HANDLE-REQUESTS
-;;   52      0   0.0   1000 100.0    971  97.1        -  (FLET #:WITHOUT-INTERRUPTS-BODY-1139 :IN SB-THREAD::INITIAL-THREAD-FUNCTION-TRAMPOLINE)
-;;   53      0   0.0   1000 100.0    971  97.1        -  (FLET SB-THREAD::WITH-MUTEX-THUNK :IN SB-THREAD::INITIAL-THREAD-FUNCTION-TRAMPOLINE)
-;;   54      0   0.0   1000 100.0    971  97.1        -  (FLET #:WITHOUT-INTERRUPTS-BODY-359 :IN SB-THREAD::CALL-WITH-MUTEX)
-;;   55      0   0.0   1000 100.0    971  97.1        -  SB-THREAD::CALL-WITH-MUTEX
-;;   56      0   0.0   1000 100.0    971  97.1        -  SB-THREAD::INITIAL-THREAD-FUNCTION-TRAMPOLINE
-;;   57      0   0.0   1000 100.0    971  97.1        -  "foreign function call_into_lisp"
-;;   58      0   0.0   1000 100.0    971  97.1        -  "foreign function new_thread_trampoline"
-;;   59      0   0.0      9   0.9    971  97.1        -  "foreign function interrupt_handle_pending"
-;;   60      0   0.0      9   0.9    971  97.1        -  "foreign function handle_trap"
-;;   61      0   0.0      3   0.3    971  97.1        -  RANDOM-UNIFORM
-;;   62      0   0.0      2   0.2    971  97.1        -  STOP-SPLIT?
-;; ------------------------------------------------------------------------
-;;          29   2.9                                     elsewhere
-;; #<SB-SPROF::CALL-GRAPH 1000 samples {10756D72D3}>
-;; CL-RF> (sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
-;;   (test-forest mnist-forest mnist-test.vec))
-;; Profiler sample vector full (321 traces / 10000 samples), doubling the size
-;; Profiler sample vector full (640 traces / 20000 samples), doubling the size
+(dolist (datum a1a-train)
+  (if (> (car datum) 0d0)
+      (setf (car datum) 0)
+      (setf (car datum) 1)))
 
-;; Number of samples:   1000
-;; Sample interval:     0.01 seconds
-;; Total sampling time: 10.0 seconds
-;; Number of cycles:    0
-;; Sampled threads:
-;;  #<SB-THREAD:THREAD "repl-thread" RUNNING {1003017FA3}>
+(dolist (datum a1a-test)
+  (if (> (car datum) 0d0)
+      (setf (car datum) 0)
+      (setf (car datum) 1)))
 
-;;            Self        Total        Cumul
-;;   Nr  Count     %  Count     %  Count     %    Calls  Function
-;; ------------------------------------------------------------------------
-;;    1    405  40.5    510  51.0    405  40.5        -  CLASS-DISTRIBUTION
-;;    2    232  23.2    396  39.6    637  63.7        -  FIND-LEAF
-;;    3    167  16.7    167  16.7    804  80.4        -  RUN-TEST
-;;    4     51   5.1     51   5.1    855  85.5        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-REF T)
-;;    5     46   4.6     46   4.6    901  90.1        -  SB-KERNEL:TWO-ARG-+
-;;    6     32   3.2    995  99.5    933  93.3        -  CLASS-DISTRIBUTION-FOREST
-;;    7     28   2.8     28   2.8    961  96.1        -  SB-KERNEL:HAIRY-DATA-VECTOR-REF/CHECK-BOUNDS
-;;    8     13   1.3     13   1.3    974  97.4        -  SB-VM::GENERIC-+
-;;    9     13   1.3     13   1.3    987  98.7        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-REF DOUBLE-FLOAT)
-;;   10      6   0.6      6   0.6    993  99.3        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-SET DOUBLE-FLOAT)
-;;   11      4   0.4      4   0.4    997  99.7        -  SB-KERNEL:HAIRY-DATA-VECTOR-SET/CHECK-BOUNDS
-;;   12      3   0.3      3   0.3   1000 100.0        -  "foreign function pthread_sigmask"
-;;   13      0   0.0   1000 100.0   1000 100.0        -  PREDICT-FOREST
-;;   14      0   0.0   1000 100.0   1000 100.0        -  TEST-FOREST
-;;   15      0   0.0   1000 100.0   1000 100.0        -  "Unknown component: #x100B97BB40"
-;;   16      0   0.0   1000 100.0   1000 100.0        -  SB-INT:SIMPLE-EVAL-IN-LEXENV
-;;   17      0   0.0   1000 100.0   1000 100.0        -  EVAL
-;;   18      0   0.0   1000 100.0   1000 100.0        -  SWANK::EVAL-REGION
-;;   19      0   0.0   1000 100.0   1000 100.0        -  (LAMBDA NIL :IN SWANK-REPL::REPL-EVAL)
-;;   20      0   0.0   1000 100.0   1000 100.0        -  SWANK-REPL::TRACK-PACKAGE
-;;   21      0   0.0   1000 100.0   1000 100.0        -  SWANK::CALL-WITH-RETRY-RESTART
-;;   22      0   0.0   1000 100.0   1000 100.0        -  SWANK::CALL-WITH-BUFFER-SYNTAX
-;;   23      0   0.0   1000 100.0   1000 100.0        -  SWANK-REPL::REPL-EVAL
-;;   24      0   0.0   1000 100.0   1000 100.0        -  SWANK:EVAL-FOR-EMACS
-;;   25      0   0.0   1000 100.0   1000 100.0        -  SWANK::PROCESS-REQUESTS
-;;   26      0   0.0   1000 100.0   1000 100.0        -  (LAMBDA NIL :IN SWANK::HANDLE-REQUESTS)
-;;   27      0   0.0   1000 100.0   1000 100.0        -  SWANK/SBCL::CALL-WITH-BREAK-HOOK
-;;   28      0   0.0   1000 100.0   1000 100.0        -  (FLET SWANK/BACKEND:CALL-WITH-DEBUGGER-HOOK :IN "/home/wiz/.roswell/lisp/quicklisp/dists/quicklisp/software/slime-v2.18/swank/sbcl.lisp")
-;;   29      0   0.0   1000 100.0   1000 100.0        -  SWANK::CALL-WITH-BINDINGS
-;;   30      0   0.0   1000 100.0   1000 100.0        -  SWANK::HANDLE-REQUESTS
-;;   31      0   0.0   1000 100.0   1000 100.0        -  (FLET #:WITHOUT-INTERRUPTS-BODY-1139 :IN SB-THREAD::INITIAL-THREAD-FUNCTION-TRAMPOLINE)
-;;   32      0   0.0   1000 100.0   1000 100.0        -  (FLET SB-THREAD::WITH-MUTEX-THUNK :IN SB-THREAD::INITIAL-THREAD-FUNCTION-TRAMPOLINE)
-;;   33      0   0.0   1000 100.0   1000 100.0        -  (FLET #:WITHOUT-INTERRUPTS-BODY-359 :IN SB-THREAD::CALL-WITH-MUTEX)
-;;   34      0   0.0   1000 100.0   1000 100.0        -  SB-THREAD::CALL-WITH-MUTEX
-;;   35      0   0.0   1000 100.0   1000 100.0        -  SB-THREAD::INITIAL-THREAD-FUNCTION-TRAMPOLINE
-;;   36      0   0.0   1000 100.0   1000 100.0        -  "foreign function call_into_lisp"
-;;   37      0   0.0   1000 100.0   1000 100.0        -  "foreign function new_thread_trampoline"
-;;   38      0   0.0      3   0.3   1000 100.0        -  "foreign function interrupt_handle_pending"
-;;   39      0   0.0      3   0.3   1000 100.0        -  "foreign function handle_trap"
-;; ------------------------------------------------------------------------
-;;           0   0.0                                     elsewhere
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix/target a1a-train)
+  (defparameter a1a-datamatrix datamat)
+  (defparameter a1a-target target))
 
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix/target a1a-test)
+  (defparameter a1a-datamatrix-test datamat)
+  (defparameter a1a-target-test target))
 
-(sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
-  (defparameter mnist-forest (make-forest 10 780 mnist-train.vec :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 27)))
+;; dtree
+(defparameter a1a-dtree (make-dtree 2 a1a-dim a1a-datamatrix a1a-target :max-depth 20))
+(test-dtree a1a-dtree a1a-datamatrix-test a1a-target-test)
 
-;; Evaluation took:
-;;   111.685 seconds of real time
-;;   111.747163 seconds of total run time (110.816033 user, 0.931130 system)
-;;   [ Run times consist of 3.490 seconds GC time, and 108.258 seconds non-GC time. ]
-;;   100.06% CPU
-;;   378,849,965,134 processor cycles
-;;   55,365,768,176 bytes consed
+;; random-forest
+(defparameter a1a-forest
+  (make-forest 2 a1a-dim a1a-datamatrix a1a-target
+               :n-tree 500 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 5))
+(test-forest a1a-forest a1a-datamatrix a1a-target)
+(test-forest a1a-forest a1a-datamatrix-test a1a-target-test)
 
-;; safety 0
-;; Evaluation took:
-;;   95.479 seconds of real time
-;;   95.532739 seconds of total run time (94.856241 user, 0.676498 system)
-;;   [ Run times consist of 3.140 seconds GC time, and 92.393 seconds non-GC time. ]
-;;   100.06% CPU
-;;   323,879,100,523 processor cycles
-;;   55,397,321,376 bytes consed
+(defparameter a1a-refine-dataset (make-refine-dataset a1a-forest a1a-datamatrix a1a-target))
+(defparameter a1a-refine-test (make-refine-dataset a1a-forest a1a-datamatrix-test a1a-target-test))
+(defparameter a1a-refine-learner (make-refine-learner a1a-forest 1.0d0))
+(loop repeat 10 do
+  (clol:train a1a-refine-learner a1a-refine-dataset)
+  (clol:test  a1a-refine-learner a1a-refine-test))
 
-;; Evaluation took:
-;;   95.163 seconds of real time
-;;   95.201786 seconds of total run time (93.868038 user, 1.333748 system)
-;;   [ Run times consist of 2.354 seconds GC time, and 92.848 seconds non-GC time. ]
-;;   100.04% CPU
-;;   322,807,001,080 processor cycles
-;;   39,925,680,864 bytes consed
+;;; a9a
 
-(test-forest mnist-forest mnist-test.vec)
+(defparameter a9a-dim 123)
+(defparameter a9a-train (clol.utils:read-data "/home/wiz/datasets/a9a" a9a-dim))
+(defparameter a9a-test (clol.utils:read-data "/home/wiz/datasets/a9a.t" a9a-dim))
 
-;;; compile message
+(dolist (datum a9a-train)
+  (if (> (car datum) 0d0)
+      (setf (car datum) 0)
+      (setf (car datum) 1)))
 
-; in: DEFUN CLASS-DISTRIBUTION
-;     (AREF (CL-RANDOM-FOREST::DTREE-DATASET CL-RANDOM-FOREST::DTREE)
-;           CL-RANDOM-FOREST::DATUM-INDEX)
-; ==>
-;   (SB-KERNEL:HAIRY-DATA-VECTOR-REF/CHECK-BOUNDS ARRAY SB-INT:INDEX)
-; 
-; note: unable to
-;   optimize
-; because:
-;   Upgraded element type of array is not known at compile time.
+(dolist (datum a9a-test)
+  (if (> (car datum) 0d0)
+      (setf (car datum) 0)
+      (setf (car datum) 1)))
 
-; in: DEFUN MAKE-RANDOM-TEST
-;     (RANDOM (CL-RANDOM-FOREST::DTREE-DATUM-DIM CL-RANDOM-FOREST::DTREE))
-; 
-; note: unable to
-;   Use inline float operations.
-; due to type uncertainty:
-;   The first argument is a (OR (SINGLE-FLOAT (0.0)) (DOUBLE-FLOAT (0.0d0))
-;                               (INTEGER 1)), not a SINGLE-FLOAT.
-; 
-; note: unable to
-;   Use inline float operations.
-; due to type uncertainty:
-;   The first argument is a (OR (SINGLE-FLOAT (0.0)) (DOUBLE-FLOAT (0.0d0))
-;                               (INTEGER 1)), not a DOUBLE-FLOAT.
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix/target a9a-train)
+  (defparameter a9a-datamatrix datamat)
+  (defparameter a9a-target target))
 
-;     (= MIN MAX)
-; 
-; note: unable to
-;   open-code FLOAT to RATIONAL comparison
-; due to type uncertainty:
-;   The first argument is a NUMBER, not a FLOAT.
-;   The second argument is a NUMBER, not a RATIONAL.
-; 
-; note: unable to open code because: The operands might not be the same type.
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix/target a9a-test)
+  (defparameter a9a-datamatrix-test datamat)
+  (defparameter a9a-target-test target))
 
-;     (LOOP CL-RANDOM-FOREST::FOR CL-RANDOM-FOREST::INDEX CL-RANDOM-FOREST::ACROSS CL-RANDOM-FOREST::INDICES
-;           CL-RANDOM-FOREST::COLLECT (AREF
-;                                      (CDR
-;                                       (AREF
-;                                        (CL-RANDOM-FOREST::DTREE-DATASET
-;                                         CL-RANDOM-FOREST::DTREE)
-;                                        CL-RANDOM-FOREST::INDEX))
-;                                      CL-RANDOM-FOREST::ATTRIBUTE))
-; --> BLOCK LET SB-LOOP::WITH-LOOP-LIST-COLLECTION-HEAD LET* 
-; --> SB-LOOP::LOOP-BODY TAGBODY SB-LOOP::LOOP-REALLY-DESETQ SETQ THE 
-; --> AREF 
-; ==>
-;   (SB-KERNEL:HAIRY-DATA-VECTOR-REF/CHECK-BOUNDS ARRAY SB-INT:INDEX)
-; 
-; note: unable to
-;   optimize
-; because:
-;   Upgraded element type of array is not known at compile time.
+;; dtree
+(defparameter a9a-dtree (make-dtree 2 a9a-dim a9a-datamatrix a9a-target :max-depth 20))
+(test-dtree a9a-dtree a9a-datamatrix-test a9a-target-test)
 
-;     (AREF (CL-RANDOM-FOREST::DTREE-DATASET CL-RANDOM-FOREST::DTREE)
-;           CL-RANDOM-FOREST::INDEX)
-; ==>
-;   (SB-KERNEL:HAIRY-DATA-VECTOR-REF/CHECK-BOUNDS ARRAY SB-INT:INDEX)
-; 
-; note: unable to
-;   optimize
-; because:
-;   Upgraded element type of array is not known at compile time.
+;; random-forest
+(defparameter a9a-forest
+  (make-forest 2 a9a-dim a9a-datamatrix a9a-target
+               :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 5))
+(test-forest a9a-forest a9a-datamatrix a9a-target)
+(test-forest a9a-forest a9a-datamatrix-test a9a-target-test)
 
-;     (AREF
-;      (CDR
-;       (AREF (CL-RANDOM-FOREST::DTREE-DATASET CL-RANDOM-FOREST::DTREE)
-;             CL-RANDOM-FOREST::INDEX))
-;      CL-RANDOM-FOREST::ATTRIBUTE)
-; ==>
-;   (SB-KERNEL:HAIRY-DATA-VECTOR-REF/CHECK-BOUNDS ARRAY SB-INT:INDEX)
-; 
-; note: unable to
-;   optimize
-; because:
-;   Upgraded element type of array is not known at compile time.
+(defparameter a9a-refine-dataset (make-refine-dataset a9a-forest a9a-datamatrix a9a-target))
+(defparameter a9a-refine-test (make-refine-dataset a9a-forest a9a-datamatrix-test a9a-target-test))
+(defparameter a9a-refine-learner (make-refine-learner a9a-forest 1.0d0))
+(loop repeat 10 do
+  (clol:train a9a-refine-learner a9a-refine-dataset)
+  (clol:test  a9a-refine-learner a9a-refine-test))
 
-;     (= MIN MAX)
-; 
-; note: forced to do GENERIC-= (cost 10)
-;       unable to do inline float comparison (cost 3) because:
-;       The first argument is a T, not a DOUBLE-FLOAT.
-;       The second argument is a T, not a (COMPLEX DOUBLE-FLOAT).
-;       unable to do inline float comparison (cost 3) because:
-;       The first argument is a T, not a (COMPLEX DOUBLE-FLOAT).
-;       The second argument is a T, not a (COMPLEX DOUBLE-FLOAT).
-;       etc.
+;;; 
 
+;;;;; letter
 
-;; Profiler sample vector full (289 traces / 10000 samples), doubling the size
-;; Profiler sample vector full (577 traces / 20000 samples), doubling the size
+(defparameter letter-dim 16)
+(defparameter letter-n-class 26)
+(defparameter letter-train (clol.utils:read-data "/home/wiz/datasets/letter.scale" letter-dim
+                                                 :multiclass-p t))
+(defparameter letter-test (clol.utils:read-data "/home/wiz/datasets/letter.scale.t" letter-dim
+                                                :multiclass-p t))
 
-;; Number of samples:   1000
-;; Sample interval:     0.01 seconds
-;; Total sampling time: 10.0 seconds
-;; Number of cycles:    0
-;; Sampled threads:
-;;  #<SB-THREAD:THREAD "repl-thread" RUNNING {1002DAFFA3}>
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix/target letter-train)
+  (defparameter letter-datamatrix datamat)
+  (defparameter letter-target target))
 
-;;            Self        Total        Cumul
-;;   Nr  Count     %  Count     %  Count     %    Calls  Function
-;; ------------------------------------------------------------------------
-;;    1    262  26.2    262  26.2    262  26.2        -  RUN-TEST
-;;    2    152  15.2    455  45.5    414  41.4        -  MAKE-RANDOM-TEST
-;;    3    152  15.2    152  15.2    566  56.6        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-REF DOUBLE-FLOAT)
-;;    4     48   4.8     48   4.8    614  61.4        -  SB-KERNEL:HAIRY-DATA-VECTOR-REF/CHECK-BOUNDS
-;;    5     46   4.6     68   6.8    660  66.0        -  CLASS-DISTRIBUTION
-;;    6     45   4.5     45   4.5    705  70.5        -  SB-KERNEL:TWO-ARG-<
-;;    7     37   3.7    354  35.4    742  74.2        -  SPLIT-ARR
-;;    8     33   3.3     33   3.3    775  77.5        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-REF T)
-;;    9     30   3.0     30   3.0    805  80.5        -  SB-KERNEL:TWO-ARG->
-;;   10     26   2.6     46   4.6    831  83.1        -  (FLET TEST-FUNC :IN SET-BEST-CHILDREN!)
-;;   11     21   2.1    105  10.5    852  85.2        -  MIN/MAX
-;;   12     20   2.0     97   9.7    872  87.2        -  SB-VM::GENERIC-+
-;;   13     19   1.9    145  14.5    891  89.1        -  ENTROPY
-;;   14     10   1.0     10   1.0    901  90.1        -  SB-KERNEL:TWO-ARG-+
-;;   15     10   1.0     10   1.0    911  91.1        -  "foreign function pthread_sigmask"
-;;   16      9   0.9      9   0.9    920  92.0        -  SB-KERNEL:%COERCE-CALLABLE-TO-FUN
-;;   17      7   0.7     12   1.2    927  92.7        -  SB-KERNEL:TWO-ARG-*
-;;   18      6   0.6     10   1.0    933  93.3        -  SB-KERNEL::INTEGER-/-INTEGER
-;;   19      6   0.6      7   0.7    939  93.9        -  RANDOM
-;;   20      5   0.5      5   0.5    944  94.4        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-REF FIXNUM)
-;;   21      4   0.4    996  99.6    948  94.8        -  SET-BEST-CHILDREN!
-;;   22      4   0.4      4   0.4    952  95.2        -  SB-KERNEL:TWO-ARG-GCD
-;;   23      3   0.3      7   0.7    955  95.5        -  COPY-TMP->BEST!
-;;   24      3   0.3      3   0.3    958  95.8        -  LOG
-;;   25      2   0.2    999  99.9    960  96.0        -  MAKE-DTREE
-;;   26      2   0.2      2   0.2    962  96.2        -  SB-KERNEL:TWO-ARG-=
-;;   27      2   0.2      2   0.2    964  96.4        -  SB-KERNEL:FLOAT-FORMAT-DIGITS
-;;   28      1   0.1      6   0.6    965  96.5        -  SB-KERNEL:%DOUBLE-FLOAT
-;;   29      1   0.1      1   0.1    966  96.6        -  ASH
-;;   30      1   0.1      1   0.1    967  96.7        -  MAKE-PARTIAL-ARR
-;;   31      1   0.1      1   0.1    968  96.8        -  (SB-IMPL::OPTIMIZED-DATA-VECTOR-SET FIXNUM)
-;;   32      1   0.1      1   0.1    969  96.9        -  TRUNCATE
-;;   33      1   0.1      1   0.1    970  97.0        -  SB-KERNEL::RANDOM-MT19937-UPDATE
-;;   34      0   0.0   1000 100.0    970  97.0        -  MAKE-FOREST
-;;   35      0   0.0   1000 100.0    970  97.0        -  "Unknown component: #x1001EF8E80"
-;;   36      0   0.0   1000 100.0    970  97.0        -  SB-INT:SIMPLE-EVAL-IN-LEXENV
-;;   37      0   0.0   1000 100.0    970  97.0        -  EVAL
-;;   38      0   0.0   1000 100.0    970  97.0        -  SWANK::EVAL-REGION
-;;   39      0   0.0   1000 100.0    970  97.0        -  (LAMBDA NIL :IN SWANK-REPL::REPL-EVAL)
-;;   40      0   0.0   1000 100.0    970  97.0        -  SWANK-REPL::TRACK-PACKAGE
-;;   41      0   0.0   1000 100.0    970  97.0        -  SWANK::CALL-WITH-RETRY-RESTART
-;;   42      0   0.0   1000 100.0    970  97.0        -  SWANK::CALL-WITH-BUFFER-SYNTAX
-;;   43      0   0.0   1000 100.0    970  97.0        -  SWANK-REPL::REPL-EVAL
-;;   44      0   0.0   1000 100.0    970  97.0        -  SWANK:EVAL-FOR-EMACS
-;;   45      0   0.0   1000 100.0    970  97.0        -  SWANK::PROCESS-REQUESTS
-;;   46      0   0.0   1000 100.0    970  97.0        -  (LAMBDA NIL :IN SWANK::HANDLE-REQUESTS)
-;;   47      0   0.0   1000 100.0    970  97.0        -  SWANK/SBCL::CALL-WITH-BREAK-HOOK
-;;   48      0   0.0   1000 100.0    970  97.0        -  (FLET SWANK/BACKEND:CALL-WITH-DEBUGGER-HOOK :IN "/home/wiz/.roswell/lisp/quicklisp/dists/quicklisp/software/slime-v2.18/swank/sbcl.lisp")
-;;   49      0   0.0   1000 100.0    970  97.0        -  SWANK::CALL-WITH-BINDINGS
-;;   50      0   0.0   1000 100.0    970  97.0        -  SWANK::HANDLE-REQUESTS
-;;   51      0   0.0   1000 100.0    970  97.0        -  (FLET #:WITHOUT-INTERRUPTS-BODY-1139 :IN SB-THREAD::INITIAL-THREAD-FUNCTION-TRAMPOLINE)
-;;   52      0   0.0   1000 100.0    970  97.0        -  (FLET SB-THREAD::WITH-MUTEX-THUNK :IN SB-THREAD::INITIAL-THREAD-FUNCTION-TRAMPOLINE)
-;;   53      0   0.0   1000 100.0    970  97.0        -  (FLET #:WITHOUT-INTERRUPTS-BODY-359 :IN SB-THREAD::CALL-WITH-MUTEX)
-;;   54      0   0.0   1000 100.0    970  97.0        -  SB-THREAD::CALL-WITH-MUTEX
-;;   55      0   0.0   1000 100.0    970  97.0        -  SB-THREAD::INITIAL-THREAD-FUNCTION-TRAMPOLINE
-;;   56      0   0.0   1000 100.0    970  97.0        -  "foreign function call_into_lisp"
-;;   57      0   0.0   1000 100.0    970  97.0        -  "foreign function new_thread_trampoline"
-;;   58      0   0.0    997  99.7    970  97.0        -  SPLIT-NODE!
-;;   59      0   0.0     10   1.0    970  97.0        -  "foreign function interrupt_handle_pending"
-;;   60      0   0.0     10   1.0    970  97.0        -  "foreign function handle_trap"
-;;   61      0   0.0      4   0.4    970  97.0        -  SB-KERNEL::FLOAT-RATIO
-;;   62      0   0.0      4   0.4    970  97.0        -  RANDOM-UNIFORM
-;;   63      0   0.0      1   0.1    970  97.0        -  BOOTSTRAP-SAMPLE-INDICES
-;; ------------------------------------------------------------------------
-;;          30   3.0                                     elsewhere
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix/target letter-test)
+  (defparameter letter-datamatrix-test datamat)
+  (defparameter letter-target-test target))
+
+;; dtree
+(defparameter letter-dtree
+  (make-dtree letter-n-class letter-dim letter-datamatrix letter-target :max-depth 10))
+(test-dtree letter-dtree letter-datamatrix-test letter-target-test)
+
+;; random-forest
+(defparameter letter-forest
+  (make-forest letter-n-class letter-dim letter-datamatrix letter-target
+               :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10))
+(test-forest letter-forest letter-datamatrix-test letter-target-test)
+;; max-depth=5: 73.22% / max-depth=10: 89.03% / max-depth=15: 91.4%
+
+(defparameter letter-forest-tall
+  (make-forest letter-n-class letter-dim letter-datamatrix letter-target
+               :n-tree 100 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 100))
+(test-forest letter-forest-tall letter-datamatrix-test letter-target-test) ; 96.82%
+
+(defparameter letter-refine-dataset
+  (make-refine-dataset letter-forest letter-datamatrix letter-target))
+
+(defparameter letter-refine-test
+  (make-refine-dataset letter-forest letter-datamatrix-test letter-target-test))
+
+(defparameter letter-refine-learner (make-refine-learner letter-forest 1.0d0))
+
+(loop repeat 10 do
+  (clol:train letter-refine-learner letter-refine-dataset)
+  (clol:test  letter-refine-learner letter-refine-test))
+;; max-depth=5: 95.880005% / max-depth=10: 97.259995% / max-depth=15: 97.34%
+
+;;;;; covtype
+
+(defparameter covtype-dim 54)
+(defparameter covtype-n-class 7)
+(defparameter covtype-train (clol.utils:read-data "/home/wiz/datasets/covtype.scale" covtype-dim
+                                                  :multiclass-p t))
+(defparameter covtype-test (clol.utils:read-data "/home/wiz/datasets/covtype.scale.t" covtype-dim
+                                                :multiclass-p t))
+
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix/target covtype-train)
+  (defparameter covtype-datamatrix datamat)
+  (defparameter covtype-target target))
+
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix/target covtype-test)
+  (defparameter covtype-datamatrix-test datamat)
+  (defparameter covtype-target-test target))
+
+;; dtree
+(defparameter covtype-dtree
+  (make-dtree covtype-n-class covtype-dim covtype-datamatrix covtype-target :max-depth 10))
+(test-dtree covtype-dtree covtype-datamatrix-test covtype-target-test)
+
+;; random-forest
+(defparameter covtype-forest
+  (make-forest covtype-n-class covtype-dim covtype-datamatrix covtype-target
+               :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 15 :max-depth 15))
+(test-forest covtype-forest covtype-datamatrix-test covtype-target-test)
+;; max-depth=5,n-tree=100: 2.861 seconds
+
+(defparameter covtype-forest-tall
+  (make-forest covtype-n-class covtype-dim covtype-datamatrix covtype-target
+               :n-tree 100 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 100))
+(test-forest covtype-forest-tall covtype-datamatrix-test covtype-target-test) ; 96.82%
+
+(defparameter covtype-refine-dataset
+  (make-refine-dataset covtype-forest covtype-datamatrix covtype-target))
+;; 1.787 seconds
+
+(defparameter covtype-refine-test
+  (make-refine-dataset covtype-forest covtype-datamatrix-test covtype-target-test))
+
+(defparameter covtype-refine-learner (make-refine-learner covtype-forest 1.0d0))
+
+(loop repeat 10 do
+  (clol:train covtype-refine-learner covtype-refine-dataset)
+  (clol:test  covtype-refine-learner covtype-refine-test))
+;; max-depth=5: 95.880005% / max-depth=10: 97.259995% / max-depth=15: 97.34%
+
+;; In case of without making dataset
+(loop repeat 5 do
+  (time (train-refine-learner covtype-forest covtype-refine-learner covtype-datamatrix covtype-target))
+  (time (test-refine-learner covtype-forest covtype-refine-learner covtype-datamatrix-test covtype-target-test)))
+;; 72.57374%
+
+;; usps
+;; Char74k
+;; covtype
