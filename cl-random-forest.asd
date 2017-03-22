@@ -1,6 +1,4 @@
-#|
-  This file is a part of cl-random-forest project.
-|#
+;;; -*- coding:utf-8; mode:lisp -*-
 
 (in-package :cl-user)
 (defpackage cl-random-forest-asd
@@ -10,12 +8,12 @@
 (defsystem cl-random-forest
   :version "0.1"
   :author "Satoshi Imai"
-  :license "MIT"
+  :license "MIT Licence"
   :depends-on (:cl-online-learning :alexandria :lparallel)
   :components ((:module "src"
                 :components
-                ((:file "random-forest")
-                 (:file "utils"))))
+                ((:file "utils")
+                 (:file "random-forest" :depends-on ("utils")))))
   :description "Random Forest and Global Refinement for Common Lisp"
   :long-description
   #.(with-open-file (stream (merge-pathnames

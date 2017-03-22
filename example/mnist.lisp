@@ -36,7 +36,7 @@
 ;; 6.238 seconds (1 core), 2.195 seconds (4 core)
 (defparameter mnist-forest
   (make-forest mnist-n-class mnist-dim mnist-datamatrix mnist-target
-               :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5 :gain-test #'gini))
+               :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5))
 
 ;; 5.223 seconds, Accuracy: 93.38%
 (test-forest mnist-forest mnist-datamatrix-test mnist-target-test)
@@ -71,6 +71,38 @@
 ;; In case of without making dataset
 (time (train-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix mnist-target))
 (time (test-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix-test mnist-target-test))
+
+;; 1.880 seconds
+(time
+ (defparameter mnist-leaf-index-matrix
+   (make-leaf-index-matrix mnist-forest mnist-datamatrix)))
+
+(train-refine-learner-fast mnist-refine-learner mnist-leaf-index-matrix mnist-target)
+
+(time
+ (defparameter mnist-leaf-indices-vector
+   (make-leaf-indices-vector mnist-forest mnist-datamatrix)))
+
+(time
+ (defparameter mnist-leaf-indices-vector-test
+   (make-leaf-indices-vector mnist-forest mnist-datamatrix-test)))
+
+(time
+ (train-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector mnist-target))
+
+(time
+ (test-refine-learner-fast mnist-refine-learner mnist-leaf-indices-vector-test mnist-target-test))
+
+(time
+ (test-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector-test mnist-target-test
+                               :mini-batch-size 1000))
+
+(loop repeat 10 do
+  (train-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector mnist-target)
+  (format t "train: ")
+  (test-refine-learner-fast mnist-refine-learner mnist-leaf-indices-vector mnist-target)
+  (format t "test: ")
+  (test-refine-learner-fast mnist-refine-learner mnist-leaf-indices-vector-test mnist-target-test))
 
 ;; Make a prediction
 (predict-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix-test 0)

@@ -1,4 +1,43 @@
-(in-package :cl-random-forest)
+;;; -*- coding:utf-8; mode:lisp -*-
+
+(in-package :cl-user)
+(defpackage :cl-random-forest.utils
+  (:use :cl)
+  (:nicknames :clrf.utils)
+  (:export :dotimes/pdotimes :mapcar/pmapcar :mapc/pmapc :push-ntimes
+           :clol-dataset->datamatrix/target
+           :write-to-r-format-from-clol-dataset))
+
+(in-package :cl-random-forest.utils)
+
+;;; parallelizaion utils
+
+(defmacro dotimes/pdotimes ((var n) &body body)
+  `(if lparallel:*kernel*
+       (lparallel:pdotimes (,var ,n) ,@body)
+       (dotimes (,var ,n) ,@body)))
+
+(defmacro mapcar/pmapcar (fn &rest lsts)
+  `(if lparallel:*kernel*
+       (lparallel:pmapcar ,fn ,@lsts)
+       (mapcar ,fn ,@lsts)))
+
+(defmacro mapc/pmapc (fn &rest lsts)
+  `(if lparallel:*kernel*
+       (lparallel:pmapc ,fn ,@lsts)
+       (mapc ,fn ,@lsts)))
+
+(defmacro push-ntimes (n lst &body body)
+  (let ((var (gensym)))
+    `(if lparallel:*kernel*
+         (lparallel:pdotimes (,var ,n)
+           (progn
+             ,var
+             (push (progn ,@body) ,lst)))
+         (dotimes (,var ,n)
+           (progn
+             ,var
+             (push (progn ,@body) ,lst))))))
 
 ;;; read
 
@@ -9,8 +48,7 @@
          (datamatrix (make-array (list len data-dimension) :element-type 'double-float)))
     (loop for i from 0 to (1- len)
           for datum in dataset
-          do
-             (setf (aref target i) (car datum))
+          do (setf (aref target i) (car datum))
              (loop for j from 0 to (1- data-dimension) do
                (setf (aref datamatrix i j) (aref (cdr datum) j))))
     (values datamatrix target)))

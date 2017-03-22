@@ -1,6 +1,11 @@
+;; -*- coding:utf-8; mode:lisp -*-
+
 (in-package :clrf)
 
 ;;; Small dataset ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defparameter *n-class* 4)
+(defparameter *n-dim* 2)
 
 (defparameter *dataset*
   '((0 . (-1d0 -2d0))
@@ -15,10 +20,24 @@
     (3 . (1d0 2d0))
     (3 . (1d0 1d0))))
 
-(defparameter *target* (make-array (length *dataset*) :element-type 'fixnum
-                                   :initial-contents (mapcar #'car *dataset*)))
+;; (ql:quickload :clgplot)
+;; (clgp:plots '((-2d0 -1d0)
+;;               (-2d0 -1.5d0)
+;;               (2d0 1d0 1d0)
+;;               (2d0 2d0 2d0 1d0))
+;;             :x-seqs '((-1d0 -2d0)
+;;                       (1d0 3d0)
+;;                       (-2d0 -3d0 -2d0)
+;;                       (3d0 2d0 1d0 1d0))
+;;             :style 'points
+;;             :x-range '(-3.5 3.5)
+;;             :y-range '(-3.5 3.5))
 
-(defparameter *datamatrix* (make-array (list (length *dataset*) 2) :element-type 'double-float))
+(defparameter *target*
+  (make-array (length *dataset*) :element-type 'fixnum :initial-contents (mapcar #'car *dataset*)))
+
+(defparameter *datamatrix* (make-array (list (length *dataset*) *n-dim*) :element-type 'double-float))
+;; set datamatrix
 (loop for i from 0 below (length *dataset*)
       for elem in *dataset*
       do
@@ -26,58 +45,126 @@
      (setf (aref *datamatrix* i j)
            (nth j (cdr elem)))))
 
-(defparameter *dtree* (make-dtree 4 2 *datamatrix* *target* :gain-test #'gini))
+;; make decision tree
+(defparameter *dtree* (make-dtree *n-class* *n-dim* *datamatrix* *target*))
 
-(region-min/max (make-array (array-dimension *datamatrix* 0) :element-type 'fixnum
-                            :initial-contents (alexandria:iota (array-dimension *datamatrix* 0)))
-                *datamatrix* 0)
+;; test decision tree
+(test-dtree *dtree* *datamatrix* *target*)
 
-(defparameter sample-indices1
-  (make-array 10 :element-type 'fixnum :initial-contents '(0 1 2 3 4 5 6 7 8 9)))
-
-(class-distribution sample-indices1 5 *dtree*)
-(entropy sample-indices1 (length sample-indices1) *dtree*)
-
+;; display tree information
 (traverse #'node-information-gain (dtree-root *dtree*))
 (traverse #'node-sample-indices (dtree-root *dtree*))
 
+(set-leaf-index! *dtree*)
 (do-leaf (lambda (node)
            (format t "~%leaf-index: ~A, sample-indices: ~A"
                    (node-leaf-index node)
                    (node-sample-indices node)))
   (dtree-root *dtree*))
-
-(set-leaf-index! *dtree*)
-
-(dtree-max-leaf-index *dtree*)
-
 (traverse #'node-leaf-index (dtree-root *dtree*))
 
-(test-dtree *dtree* *datamatrix* *target*)
+;; make random forest
+(defparameter *forest*
+  (make-forest *n-class* *n-dim* *datamatrix* *target* :n-tree 3 :bagging-ratio 1.0))
 
-(defparameter *forest* (make-forest 4 2 *datamatrix* *target* :n-tree 10 :bagging-ratio 1.0))
-(traverse #'node-sample-indices (dtree-root (car (forest-dtree-list *forest*))))
-
+;; test random forest
 (test-forest *forest* *datamatrix* *target*)
 
-(set-leaf-index-forest! *forest*)
-
-(loop for i from 0 to (1- (array-dimension *datamatrix* 0)) do
-  (print (clol.vector:sparse-vector-index-vector
-          (make-forest-sparse-vector *forest* *datamatrix* i))))
-
+;; make refine learner
 (defparameter *forest-learner* (make-refine-learner *forest*))
+
 (defparameter *forest-refine-dataset* (make-refine-dataset *forest* *datamatrix* *target*))
 (clol:train *forest-learner* *forest-refine-dataset*)
 (clol:test *forest-learner* *forest-refine-dataset*)
 
-(defparameter *forest-parent-list* (collect-leaf-parent *forest*))
+(defparameter *forest-leaf-indices-vector*
+  (make-leaf-indices-vector *forest* *datamatrix*))
 
-(defparameter deleted-parent
-  (delete-children! (car (collect-leaf-parent-sorted *forest* *forest-learner*))))
+(train-refine-learner-fast *forest-learner* *forest-leaf-indices-vector* *target*)
+(test-refine-learner-fast *forest-learner* *forest-leaf-indices-vector* *target*)
 
-(pruning *forest* *forest-learner* 0.2)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; parallelizaion of test
 
+(defparameter mini-batch-size 4)
+(defparameter n-class 4)
+(defparameter n-tree 3)
+
+(defparameter sv-vec (make-array n-class))
+(let ((sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
+      (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0)))
+  (loop for i fixnum from 0 to (1- n-class) do
+    (setf (svref sv-vec i)
+          (clol.vector:make-sparse-vector sv-index sv-val))))
+
+(defparameter activation-matrix
+  (make-array (list mini-batch-size n-class) :element-type 'double-float :initial-element 0d0))
+
+(set-activation-matrix activation-matrix *forest-learner* n-class sv-vec *forest-leaf-indices-vector* 0 mini-batch-size)
+
+(set-activation-matrix activation-matrix *forest-learner* n-class sv-vec *forest-leaf-indices-vector* 2 3)
+
+(set-activation-matrix activation-matrix *forest-learner* n-class sv-vec *forest-leaf-indices-vector* 0 11)
+
+(floor 11 40)
+2
+3
+
+
+(defparameter n-correct 0)
+(maximize-activation/count activation-matrix mini-batch-size *target* 0)
+
+
+(test-refine-learner-fast *forest-learner* *forest-leaf-indices-vector* *target*)
+(test-refine-learner-parallel *forest-learner* *forest-leaf-indices-vector* *target* :mini-batch-size 4)
+
+;; Enable parallelizaion
+(setf lparallel:*kernel* (lparallel:make-kernel 4))
+(train-refine-learner-parallel *forest-learner* *forest-leaf-indices-vector* *target*)
+(test-refine-learner-fast *forest-learner* *forest-leaf-indices-vector* *target*)
+
+;; Global pruning
+(pruning! *forest* *forest-learner* 0.1)
+(setf *forest-leaf-indices-vector* (make-leaf-indices-vector *forest* *datamatrix*))
+(setf *forest-learner* (make-refine-learner *forest*))
+(train-refine-learner-parallel *forest-learner* *forest-leaf-indices-vector* *target*)
+(test-refine-learner-fast *forest-learner* *forest-leaf-indices-vector* *target*)
+
+;; 枝刈りの前後で森の中の決定木の深さを比較する
+(defun collect-leaf-depth (dtree)
+  (let ((lst nil))
+    (do-leaf (lambda (node)
+               (push (node-depth node) lst))
+      (dtree-root dtree))
+    (nreverse lst)))
+
+(mapcar #'collect-leaf-depth (forest-dtree-list *forest*))
+
+(traverse #'node-information-gain (dtree-root (forest-dtree-list *forest*))
+(traverse #'node-sample-indices (dtree-root *dtree*))
+
+;; 初期状態
+;; '((2 2 2 2) (2 2 2 2) (2 2 2 2) (2 2 2 2) (1 2 2) (1 2 2) (2 2 1) (2 3 3 1)
+;;   (2 2 2 2) (2 2 2 2))
+
+;; 枝刈り実行
+(pruning! *forest* *forest-learner* 0.1)
+(setf *forest-leaf-indices-vector* (make-leaf-indices-vector *forest* *datamatrix*))
+(setf *forest-learner* (make-refine-learner *forest*))
+(train-refine-learner-parallel *forest-learner* *forest-leaf-indices-vector* *target*)
+(test-refine-learner-fast *forest-learner* *forest-leaf-indices-vector* *target*)
+(mapcar #'collect-leaf-depth (forest-dtree-list *forest*))
+
+;; '((2 2 2 2) (2 2 2 2) (2 2 2 2) (2 2 2 2) (1 2 2) (1 1) (2 2 1) (2 3 3 1)
+;;   (2 2 2 2) (2 2 2 2))
+
+;; '((2 2 2 2) (2 2 2 2) (2 2 2 2) (2 2 2 2) (1 2 2) (1 1) (2 2 1) (2 2 1)
+;;   (2 2 2 2) (2 2 2 2))
+
+;; '((2 2 2 2) (2 2 2 2) (2 2 2 2) (2 2 2 2) (1 2 2) (1 1) (2 2 1) (2 2 1)
+;;   (2 2 2 2) (2 2 1))
+
+;; '((2 2 2 2) (2 2 2 2) (2 2 2 2) (2 2 1) (1 2 2) (1 1) (2 2 1) (2 2 1) (2 2 2 2)
+;;   (2 2 1))
 
 ;;; MNIST ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -607,20 +694,18 @@
 
 (defparameter covtype-dim 54)
 (defparameter covtype-n-class 7)
-(defparameter covtype-train (clol.utils:read-data "/home/wiz/datasets/covtype.scale" covtype-dim
-                                                  :multiclass-p t))
-(defparameter covtype-test (clol.utils:read-data "/home/wiz/datasets/covtype.scale.t" covtype-dim
-                                                :multiclass-p t))
 
-(multiple-value-bind (datamat target)
-    (clol-dataset->datamatrix/target covtype-train)
-  (defparameter covtype-datamatrix datamat)
-  (defparameter covtype-target target))
+(let ((covtype-train (clol.utils:read-data "/home/wiz/datasets/covtype.scale" covtype-dim :multiclass-p t))
+      (covtype-test (clol.utils:read-data "/home/wiz/datasets/covtype.scale.t" covtype-dim :multiclass-p t)))
+  (multiple-value-bind (datamat target)
+      (clol-dataset->datamatrix/target covtype-train)
+    (defparameter covtype-datamatrix datamat)
+    (defparameter covtype-target target))
 
-(multiple-value-bind (datamat target)
-    (clol-dataset->datamatrix/target covtype-test)
-  (defparameter covtype-datamatrix-test datamat)
-  (defparameter covtype-target-test target))
+  (multiple-value-bind (datamat target)
+      (clol-dataset->datamatrix/target covtype-test)
+    (defparameter covtype-datamatrix-test datamat)
+    (defparameter covtype-target-test target)))
 
 ;; dtree
 (defparameter covtype-dtree
@@ -628,9 +713,10 @@
 (test-dtree covtype-dtree covtype-datamatrix-test covtype-target-test)
 
 ;; random-forest
-(defparameter covtype-forest
-  (make-forest covtype-n-class covtype-dim covtype-datamatrix covtype-target
-               :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 15 :max-depth 15))
+(time
+ (defparameter covtype-forest
+   (make-forest covtype-n-class covtype-dim covtype-datamatrix covtype-target
+                :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 20 :max-depth 15)))
 (test-forest covtype-forest covtype-datamatrix-test covtype-target-test)
 ;; max-depth=5,n-tree=100: 2.861 seconds
 
@@ -658,6 +744,28 @@
   (time (train-refine-learner covtype-forest covtype-refine-learner covtype-datamatrix covtype-target))
   (time (test-refine-learner covtype-forest covtype-refine-learner covtype-datamatrix-test covtype-target-test)))
 ;; 72.57374%
+
+;;  4.495 seconds of real time
+(time
+ (defparameter covtype-leaf-index-matrix
+   (make-leaf-index-matrix covtype-forest covtype-datamatrix)))
+
+;; 4.221 seconds
+(time
+ (defparameter covtype-leaf-indices-vector
+   (make-leaf-indices-vector covtype-forest covtype-datamatrix)))
+
+(time
+ (defparameter covtype-leaf-indices-vector-test
+   (make-leaf-indices-vector covtype-forest covtype-datamatrix-test)))
+
+(loop repeat 10 do
+  (train-refine-learner-fast covtype-refine-learner covtype-leaf-indices-vector covtype-target)
+  (format t "train: ")
+  (test-refine-learner-fast covtype-refine-learner covtype-leaf-indices-vector covtype-target)
+  (format t "test: ")
+  (test-refine-learner-fast covtype-refine-learner covtype-leaf-indices-vector-test covtype-target-test))
+
 
 ;; usps
 ;; Char74k

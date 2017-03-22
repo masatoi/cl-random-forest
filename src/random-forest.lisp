@@ -1,6 +1,8 @@
+;;; -*- coding:utf-8; mode:lisp -*-
+
 (in-package :cl-user)
 (defpackage cl-random-forest
-  (:use :cl)
+  (:use :cl :cl-random-forest.utils)
   (:nicknames :clrf))
 
 (in-package :cl-random-forest)
@@ -338,14 +340,20 @@
               max-class i)))
     max-class))
 
-(defun test-dtree (dtree datamatrix target)
-  (let ((counter 0)
+(defun calc-accuracy (n-correct len &key quiet-p)
+  (let ((accuracy (* (/ n-correct len) 100.0)))
+    (if (not quiet-p)
+        (format t "Accuracy: ~f%, Correct: ~A, Total: ~A~%" accuracy n-correct len))
+    (values accuracy n-correct len)))
+
+(defun test-dtree (dtree datamatrix target &key quiet-p)
+  (let ((n-correct 0)
         (len (array-dimension datamatrix 0)))
     (loop for i fixnum from 0 to (1- len) do
       (when (= (predict-dtree dtree datamatrix i)
                (aref target i))
-        (incf counter)))
-    (* 100d0 (/ counter len))))
+        (incf n-correct)))
+    (calc-accuracy n-correct len :quiet-p quiet-p)))
 
 ;;; forest
 
@@ -366,20 +374,6 @@
     (loop for i from 0 to (1- n) do
       (setf (aref arr i) (random len)))
     arr))
-
-
-;; (setf lparallel:*kernel* (lparallel:make-kernel 4))
-(defmacro push-ntimes (n lst &body body)
-  (let ((var (gensym)))
-    `(if lparallel:*kernel*
-         (lparallel:pdotimes (,var ,n)
-           (progn
-             ,var
-             (push (progn ,@body) ,lst)))
-         (dotimes (,var ,n)
-           (progn
-             ,var
-             (push (progn ,@body) ,lst))))))
 
 (defun make-forest (n-class datum-dim datamatrix target
                     &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
@@ -453,21 +447,16 @@
               max-class i)))
     max-class))
 
-(defun test-forest (forest datamatrix target)
-  (let ((counter 0)
+(defun test-forest (forest datamatrix target &key quiet-p)
+  (let ((n-correct 0)
         (len (array-dimension datamatrix 0)))
     (loop for i fixnum from 0 to (1- len) do
       (when (= (predict-forest forest datamatrix i)
                (aref target i))
-        (incf counter)))
-    (* 100d0 (/ counter len))))
+        (incf n-correct)))
+    (calc-accuracy n-correct len :quiet-p quiet-p)))
 
 ;;; Global refinement
-
-(defmacro mapcar/pmapcar (fn lst)
-  `(if lparallel:*kernel*
-       (lparallel:pmapcar ,fn ,lst)
-       (mapcar ,fn ,lst)))
 
 (defun make-refine-vector (forest datamatrix datum-index)
   (let ((index-offset (forest-index-offset forest))
@@ -555,11 +544,209 @@
          (n-correct
            (loop for i from 0 to (1- len)
                  count (= (predict-refine-learner forest refine-learner datamatrix i)
-                          (aref target i))))
-         (accuracy (* (/ n-correct len) 100.0)))
-    (if (not quiet-p)
-        (format t "Accuracy: ~f%, Correct: ~A, Total: ~A~%" accuracy n-correct len))
-    (values accuracy n-correct len)))
+                          (aref target i)))))
+    (calc-accuracy n-correct len :quiet-p quiet-p)))
+
+;; Not refine dataset as list of sparse-vector but as leaf-index-matrix (datasize * n-tree)
+;; Don't use this for global pruning
+(defun make-leaf-index-matrix (forest datamatrix)
+  (let ((index-offset (forest-index-offset forest))
+        (len (array-dimension datamatrix 0))
+        (n-tree (forest-n-tree forest)))
+    (declare (optimize (speed 3) (safety 0))
+             (type (simple-array double-float) datamatrix)
+             (type (simple-array fixnum) index-offset)
+             (type fixnum len n-tree))
+    (let ((leaf-index-matrix (make-array (list len n-tree) :element-type 'fixnum)))
+      (declare (type (simple-array fixnum) leaf-index-matrix))
+      (mapc/pmapc
+       (lambda (dtree)
+         (let* ((tree-id (dtree-id dtree))
+                (offset (aref index-offset tree-id)))
+           (declare (type fixnum tree-id offset))
+           (loop for i fixnum from 0 to (1- len) do
+             (let ((leaf-index (node-leaf-index (find-leaf (dtree-root dtree) datamatrix i))))
+               (declare (type fixnum leaf-index))
+               (setf (aref leaf-index-matrix i tree-id)
+                     (+ leaf-index offset))))))
+       (forest-dtree-list forest))
+      leaf-index-matrix)))
+
+(defun make-displaced-datum (matrix datum-index)
+  (let ((n-col (array-dimension matrix 1)))
+    (make-array n-col :element-type 'fixnum
+                      :displaced-to matrix
+                      :displaced-index-offset (* datum-index n-col))))
+
+(defun make-leaf-indices-vector (forest datamatrix)
+  (let ((index-offset (forest-index-offset forest))
+        (len (array-dimension datamatrix 0))
+        (n-tree (forest-n-tree forest)))
+    (declare (optimize (speed 3) (safety 0))
+             (type (simple-array double-float) datamatrix)
+             (type (simple-array fixnum) index-offset)
+             (type fixnum len n-tree))
+    (let ((leaf-indices-vector (make-array len)))
+      (loop for i from 0 to (1- len) do
+        (setf (aref leaf-indices-vector i) (make-array n-tree :element-type 'fixnum)))
+      (mapc/pmapc
+       (lambda (dtree)
+         (let* ((tree-id (dtree-id dtree))
+                (offset (aref index-offset tree-id)))
+           (declare (type fixnum tree-id offset))
+           (loop for i fixnum from 0 to (1- len) do
+             (let ((leaf-index (node-leaf-index (find-leaf (dtree-root dtree) datamatrix i)))
+                   (destination (svref leaf-indices-vector i)))
+               (declare (type fixnum leaf-index)
+                        (type (simple-array fixnum) destination))
+               (setf (aref destination tree-id) (+ leaf-index offset))))))
+       (forest-dtree-list forest))
+      leaf-indices-vector)))
+
+(defun update-refine-learner-fast (refine-learner leaf-indices-vector target datum-index sparse-vector-obj)
+  (setf (clol.vector:sparse-vector-index-vector sparse-vector-obj)
+        (svref leaf-indices-vector datum-index))
+  (clol::one-vs-rest-update refine-learner
+                            sparse-vector-obj
+                            (aref target datum-index)))
+
+(defun train-refine-learner-fast (refine-learner leaf-indices-vector target)
+  (let* ((len (length leaf-indices-vector))
+         (n-tree (length (svref leaf-indices-vector 0)))
+         (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
+         (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+         (sv (clol.vector:make-sparse-vector sv-index sv-val)))
+    (loop for i fixnum from 0 to (1- len) do
+      (update-refine-learner-fast refine-learner leaf-indices-vector target i sv))))
+
+(defun predict-refine-learner-fast (refine-learner leaf-indices-vector datum-index sparse-vector-obj)
+  (setf (clol.vector:sparse-vector-index-vector sparse-vector-obj)
+        (svref leaf-indices-vector datum-index))
+  (clol:one-vs-rest-predict refine-learner sparse-vector-obj))
+
+(defun test-refine-learner-fast (refine-learner leaf-indices-vector target &key quiet-p)
+  (let* ((len (length leaf-indices-vector))
+         (n-tree (length (svref leaf-indices-vector 0)))
+         (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
+         (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+         (sv (clol.vector:make-sparse-vector sv-index sv-val))
+         (n-correct
+           (loop for i from 0 to (1- len)
+                 count (= (predict-refine-learner-fast refine-learner leaf-indices-vector i sv)
+                          (aref target i)))))
+    (calc-accuracy n-correct len :quiet-p quiet-p)))
+
+
+;;; Parallel multiclass classifiers ;;;
+
+(defun train-refine-learner-parallel (refine-learner leaf-indices-vector target)
+  (let* ((len (length leaf-indices-vector))
+         (n-tree (length (svref leaf-indices-vector 0)))
+         (n-class (clol::one-vs-rest-n-class refine-learner))
+         (learners (clol::one-vs-rest-learners-vector refine-learner))
+         (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
+         (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+         (sv-vec (make-array n-class)))
+    (loop for i fixnum from 0 to (1- n-class) do
+      (setf (svref sv-vec i)
+            (clol.vector:make-sparse-vector sv-index sv-val)))
+    (dotimes/pdotimes (class-id n-class)
+      (loop for datum-id fixnum from 0 to (1- len) do
+        (setf (clol.vector:sparse-vector-index-vector (svref sv-vec class-id))
+              (svref leaf-indices-vector datum-id))
+        (clol:sparse-arow-update (svref learners class-id)
+                                 (svref sv-vec class-id)
+                                 (if (= (aref target datum-id) class-id) 1d0 -1d0))))))
+
+;; dataset: simple vector of leaf-indices-vector
+(defun set-activation-matrix
+    (activation-matrix refine-learner n-class sv-vec leaf-indices-vector cycle end-of-mini-batch)
+  (dotimes/pdotimes (class-id n-class) 
+    ;; ≫class-id
+    (let ((learner (svref (clol::one-vs-rest-learners-vector refine-learner) class-id))
+          (input (svref sv-vec class-id)))
+      (loop for i from 0 to (1- end-of-mini-batch) do
+        (setf (clol.vector:sparse-vector-index-vector input)
+              (svref leaf-indices-vector (+ (* (array-dimension activation-matrix 0) cycle) i)))
+        (setf (aref activation-matrix i class-id)
+              (funcall (clol::one-vs-rest-learner-activate refine-learner)
+                       input
+                       (funcall (clol::one-vs-rest-learner-weight refine-learner) learner)
+                       (funcall (clol::one-vs-rest-learner-bias refine-learner) learner)))))))
+
+(defun maximize-activation/count (activation-matrix end-of-mini-batch target cycle)
+  (let ((n-correct 0))
+    (loop for i from 0 to (1- end-of-mini-batch) do
+      (let ((max-activation most-negative-double-float)
+            (max-class 0))
+        (loop for j from 0 to (1- (array-dimension activation-matrix 1)) do
+          (when (> (aref activation-matrix i j) max-activation)
+            (setf max-activation (aref activation-matrix i j)
+                  max-class j)))
+        (when (= max-class (aref target (+ (* (array-dimension activation-matrix 0) cycle) i)))
+          (incf n-correct))))
+    n-correct))
+
+(defun test-refine-learner-parallel (refine-learner leaf-indices-vector target
+                                     &key quiet-p (mini-batch-size 1000))
+  (let* ((len (length leaf-indices-vector))
+         (n-tree (length (svref leaf-indices-vector 0)))
+         (n-class (clol::one-vs-rest-n-class refine-learner))
+         (activation-matrix (make-array (list mini-batch-size n-class) :element-type 'double-float :initial-element 0d0))
+         (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
+         (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+         (sv-vec (make-array n-class))
+         (n-correct 0))
+    ;; init sv-vec
+    (loop for i fixnum from 0 to (1- n-class) do
+      (setf (svref sv-vec i)
+            (clol.vector:make-sparse-vector sv-index sv-val)))
+    (multiple-value-bind (max-cycle end-of-mini-batch)
+        (floor len mini-batch-size)
+      ;; ≫max-cycle
+      ;; ≫end-of-mini-batch
+      (when (> max-cycle 0)
+        (loop for cycle from 0 to (1- max-cycle) do
+          (set-activation-matrix activation-matrix refine-learner n-class sv-vec
+                                 leaf-indices-vector cycle mini-batch-size)
+          (incf n-correct
+                (maximize-activation/count activation-matrix mini-batch-size target cycle))))
+      ;; remain
+      (set-activation-matrix activation-matrix refine-learner n-class sv-vec
+                             leaf-indices-vector max-cycle end-of-mini-batch)
+      (incf n-correct
+            (maximize-activation/count activation-matrix end-of-mini-batch target max-cycle))
+
+      (calc-accuracy n-correct len :quiet-p quiet-p))))
+
+(defun one-vs-rest-predict (mulc input)
+  (let ((max-f most-negative-double-float)
+	(max-i 0))
+    (loop for i from 0 to (1- (one-vs-rest-n-class mulc)) do
+      (let* ((learner (svref (one-vs-rest-learners-vector mulc) i))
+	     (learner-f (funcall (one-vs-rest-learner-activate mulc)
+                                 input
+                                 (funcall (one-vs-rest-learner-weight mulc) learner)
+                                 (funcall (one-vs-rest-learner-bias mulc)   learner))))
+	(if (> learner-f max-f)
+	  (setf max-f learner-f
+		max-i i))))
+    max-i))
+
+;; (defun test-refine-learner-fast (refine-learner leaf-indices-vector target)
+;;   (let* ((len (length leaf-indices-vector))
+;;          (n-tree (length (svref leaf-indices-vector 0)))
+;;          (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
+;;          (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+;;          (sv (clol.vector:make-sparse-vector sv-index sv-val))
+;;          (n-correct
+;;            (loop for i from 0 to (1- len)
+;;                  count (= (predict-refine-learner-fast refine-learner leaf-indices-vector i sv)
+;;                           (aref target i))))
+;;          (accuracy (* (/ n-correct len) 100.0)))
+;;     (if (not quiet-p)
+;;         (format t "Accuracy: ~f%, Correct: ~A, Total: ~A~%" accuracy n-correct len))
+;;     (values accuracy n-correct len)))
 
 ;;; Global pruning
 
