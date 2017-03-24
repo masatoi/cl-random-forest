@@ -88,21 +88,23 @@
    (make-leaf-indices-vector mnist-forest mnist-datamatrix-test)))
 
 (time
+ (train-refine-learner-fast mnist-refine-learner mnist-leaf-indices-vector mnist-target))
+
+(time
  (train-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector mnist-target))
 
 (time
  (test-refine-learner-fast mnist-refine-learner mnist-leaf-indices-vector-test mnist-target-test))
 
 (time
- (test-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector-test mnist-target-test
-                               :mini-batch-size 1000))
+ (test-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector-test mnist-target-test))
 
 (loop repeat 10 do
   (train-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector mnist-target)
-  (format t "train: ")
-  (test-refine-learner-fast mnist-refine-learner mnist-leaf-indices-vector mnist-target)
+  ;; (format t "train: ")
+  ;; (test-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector mnist-target)
   (format t "test: ")
-  (test-refine-learner-fast mnist-refine-learner mnist-leaf-indices-vector-test mnist-target-test))
+  (test-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector-test mnist-target-test))
 
 ;; Make a prediction
 (predict-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix-test 0)

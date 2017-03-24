@@ -55,116 +55,38 @@
 (traverse #'node-information-gain (dtree-root *dtree*))
 (traverse #'node-sample-indices (dtree-root *dtree*))
 
+;; set index to leaf nodes
 (set-leaf-index! *dtree*)
-(do-leaf (lambda (node)
-           (format t "~%leaf-index: ~A, sample-indices: ~A"
-                   (node-leaf-index node)
-                   (node-sample-indices node)))
-  (dtree-root *dtree*))
 (traverse #'node-leaf-index (dtree-root *dtree*))
 
 ;; make random forest
 (defparameter *forest*
-  (make-forest *n-class* *n-dim* *datamatrix* *target* :n-tree 3 :bagging-ratio 1.0))
+  (make-forest *n-class* *n-dim* *datamatrix* *target* :n-tree 10 :bagging-ratio 1.0))
 
 ;; test random forest
 (test-forest *forest* *datamatrix* *target*)
 
 ;; make refine learner
 (defparameter *forest-learner* (make-refine-learner *forest*))
+(defparameter *forest-refine-dataset* (make-refine-dataset *forest* *datamatrix*))
 
-(defparameter *forest-refine-dataset* (make-refine-dataset *forest* *datamatrix* *target*))
-(clol:train *forest-learner* *forest-refine-dataset*)
-(clol:test *forest-learner* *forest-refine-dataset*)
-
-(defparameter *forest-leaf-indices-vector*
-  (make-leaf-indices-vector *forest* *datamatrix*))
-
-(train-refine-learner-fast *forest-learner* *forest-leaf-indices-vector* *target*)
-(test-refine-learner-fast *forest-learner* *forest-leaf-indices-vector* *target*)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; parallelizaion of test
-
-(defparameter mini-batch-size 4)
-(defparameter n-class 4)
-(defparameter n-tree 3)
-
-(defparameter sv-vec (make-array n-class))
-(let ((sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
-      (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0)))
-  (loop for i fixnum from 0 to (1- n-class) do
-    (setf (svref sv-vec i)
-          (clol.vector:make-sparse-vector sv-index sv-val))))
-
-(defparameter activation-matrix
-  (make-array (list mini-batch-size n-class) :element-type 'double-float :initial-element 0d0))
-
-(set-activation-matrix activation-matrix *forest-learner* n-class sv-vec *forest-leaf-indices-vector* 0 mini-batch-size)
-
-(set-activation-matrix activation-matrix *forest-learner* n-class sv-vec *forest-leaf-indices-vector* 2 3)
-
-(set-activation-matrix activation-matrix *forest-learner* n-class sv-vec *forest-leaf-indices-vector* 0 11)
-
-(floor 11 40)
-2
-3
-
-
-(defparameter n-correct 0)
-(maximize-activation/count activation-matrix mini-batch-size *target* 0)
-
-
-(test-refine-learner-fast *forest-learner* *forest-leaf-indices-vector* *target*)
-(test-refine-learner-parallel *forest-learner* *forest-leaf-indices-vector* *target* :mini-batch-size 4)
+(train-refine-learner *forest-learner* *forest-refine-dataset* *target*)
+(test-refine-learner  *forest-learner* *forest-refine-dataset* *target*)
 
 ;; Enable parallelizaion
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
-(train-refine-learner-parallel *forest-learner* *forest-leaf-indices-vector* *target*)
-(test-refine-learner-fast *forest-learner* *forest-leaf-indices-vector* *target*)
+(train-refine-learner *forest-learner* *forest-refine-dataset* *target*)
+(test-refine-learner  *forest-learner* *forest-refine-dataset* *target*)
 
 ;; Global pruning
 (pruning! *forest* *forest-learner* 0.1)
 (setf *forest-leaf-indices-vector* (make-leaf-indices-vector *forest* *datamatrix*))
 (setf *forest-learner* (make-refine-learner *forest*))
-(train-refine-learner-parallel *forest-learner* *forest-leaf-indices-vector* *target*)
-(test-refine-learner-fast *forest-learner* *forest-leaf-indices-vector* *target*)
-
-;; 枝刈りの前後で森の中の決定木の深さを比較する
-(defun collect-leaf-depth (dtree)
-  (let ((lst nil))
-    (do-leaf (lambda (node)
-               (push (node-depth node) lst))
-      (dtree-root dtree))
-    (nreverse lst)))
-
-(mapcar #'collect-leaf-depth (forest-dtree-list *forest*))
+(train-refine-learner *forest-learner* *forest-leaf-indices-vector* *target*)
+(test-refine-learner  *forest-learner* *forest-leaf-indices-vector* *target*)
 
 (traverse #'node-information-gain (dtree-root (forest-dtree-list *forest*))
 (traverse #'node-sample-indices (dtree-root *dtree*))
-
-;; 初期状態
-;; '((2 2 2 2) (2 2 2 2) (2 2 2 2) (2 2 2 2) (1 2 2) (1 2 2) (2 2 1) (2 3 3 1)
-;;   (2 2 2 2) (2 2 2 2))
-
-;; 枝刈り実行
-(pruning! *forest* *forest-learner* 0.1)
-(setf *forest-leaf-indices-vector* (make-leaf-indices-vector *forest* *datamatrix*))
-(setf *forest-learner* (make-refine-learner *forest*))
-(train-refine-learner-parallel *forest-learner* *forest-leaf-indices-vector* *target*)
-(test-refine-learner-fast *forest-learner* *forest-leaf-indices-vector* *target*)
-(mapcar #'collect-leaf-depth (forest-dtree-list *forest*))
-
-;; '((2 2 2 2) (2 2 2 2) (2 2 2 2) (2 2 2 2) (1 2 2) (1 1) (2 2 1) (2 3 3 1)
-;;   (2 2 2 2) (2 2 2 2))
-
-;; '((2 2 2 2) (2 2 2 2) (2 2 2 2) (2 2 2 2) (1 2 2) (1 1) (2 2 1) (2 2 1)
-;;   (2 2 2 2) (2 2 2 2))
-
-;; '((2 2 2 2) (2 2 2 2) (2 2 2 2) (2 2 2 2) (1 2 2) (1 1) (2 2 1) (2 2 1)
-;;   (2 2 2 2) (2 2 1))
-
-;; '((2 2 2 2) (2 2 2 2) (2 2 2 2) (2 2 1) (1 2 2) (1 1) (2 2 1) (2 2 1) (2 2 2 2)
-;;   (2 2 1))
 
 ;;; MNIST ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -268,10 +190,6 @@
 ;;   731,896,506 processor cycles
 ;;   13,927,600 bytes consed
 
-(require 'sb-sprof)
-(sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
-  (defparameter mnist-dtree (make-dtree 10 780 mnist-datamatrix mnist-target :max-depth 5 :n-trial 270)))
-
 (time (test-dtree mnist-dtree mnist-datamatrix mnist-target))
 (time (test-dtree mnist-dtree mnist-datamatrix-test mnist-target-test))
 ;; => 75.89d0
@@ -374,9 +292,6 @@
 ;; train 99.885d0   58.639 seconds
 ;; test  96.65d0    9.791 seconds
 
-(sb-sprof:with-profiling (:max-samples 1000 :report :flat :loop nil)
-  (time (print (test-forest mnist-forest mnist-datamatrix mnist-target))))
-
 ;; => 93.43d0
 ;; Evaluation took:
 ;;   1.912 seconds of real time
@@ -393,67 +308,51 @@
 ;;   2,524,311,970 processor cycles
 ;;   72,800 bytes consed
 
-(mapcar (lambda (dtree)
-          (test-dtree dtree mnist-datamatrix-test mnist-target-test))
-        (forest-dtree-list mnist-forest))
-
-;; (66.99000000000001d0 70.59d0 69.96d0 71.12d0 70.08d0 69.89d0 69.51d0 66.9d0
-;;  69.57d0 68.49d0 70.16d0 69.1d0 69.6d0 67.7d0 70.23d0 70.98d0 66.88d0 69.16d0
-;;  71.21d0 68.38d0 69.06d0 69.89999999999999d0 69.87d0 69.82000000000001d0
-;;  69.84d0 70.17999999999999d0 70.34d0 66.95d0 70.83d0 68.22d0 69.23d0 68.16d0
-;;  68.63d0 71.04d0 68.19d0 67.86d0 68.04d0 68.56d0 69.21000000000001d0 67.97d0
-;;  69.04d0 69.39d0 67.85d0 69.57d0 69.78999999999999d0 70.17999999999999d0
-;;  67.58d0 68.89d0 67.89d0 71.57d0 69.35d0 68.02d0 68.41000000000001d0 68.2d0
-;;  71.14d0 70.88d0 70.42d0 70.73d0 68.73d0 67.57d0 70.58d0 69.67999999999999d0
-;;  70.71d0 70.57d0 70.98d0 69.12d0 69.25d0 67.95d0 70.38d0 70.58d0 70.44d0
-;;  67.92d0 69.53d0 70.59d0 68.02d0 68.83d0 70.08d0 69.28999999999999d0 71.81d0
-;;  70.8d0 69.67999999999999d0 69.35d0 71.95d0 68.19d0 69.42d0 68.60000000000001d0
-;;  68.96d0 67.73d0 70.75d0 70.14d0 68.16d0 69.58d0 70.41d0 70.03d0
-;;  68.08999999999999d0 66.79d0 72.23d0 68.05d0 68.05d0 72.14d0)
-
 ;;;;;;;;;;;;; mushrooms
 
 ;; https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary.html#mushrooms
 
-(defparameter *mushrooms-dim* 112)
-(defparameter *mushrooms-train* (clol.utils:read-data "/home/wiz/datasets/mushrooms-train" *mushrooms-dim*))
-(defparameter *mushrooms-test* (clol.utils:read-data "/home/wiz/datasets/mushrooms-test" *mushrooms-dim*))
+(defparameter mushrooms-dim 112)
 
-(dolist (datum *mushrooms-train*)
-  (if (> (car datum) 0d0)
-      (setf (car datum) 0)
-      (setf (car datum) 1)))
+(let ((mushrooms-train (clol.utils:read-data "/home/wiz/datasets/mushrooms-train"
+                                             mushrooms-dim))
+      (mushrooms-test (clol.utils:read-data "/home/wiz/datasets/mushrooms-test"
+                                            mushrooms-dim)))
+  (dolist (datum mushrooms-train)
+    (if (> (car datum) 0d0)
+        (setf (car datum) 0)
+        (setf (car datum) 1)))
+  (dolist (datum mushrooms-test)
+    (if (> (car datum) 0d0)
+        (setf (car datum) 0)
+        (setf (car datum) 1)))
 
-(dolist (datum *mushrooms-test*)
-  (if (> (car datum) 0d0)
-      (setf (car datum) 0)
-      (setf (car datum) 1)))
+  (multiple-value-bind (datamat target)
+      (clol-dataset->datamatrix/target mushrooms-train)
+    (defparameter mushrooms-datamatrix datamat)
+    (defparameter mushrooms-target target))
 
-(multiple-value-bind (datamat target)
-    (clol-dataset->datamatrix/target *mushrooms-train*)
-  (defparameter mushrooms-datamatrix datamat)
-  (defparameter mushrooms-target target))
-
-(multiple-value-bind (datamat target)
-    (clol-dataset->datamatrix/target *mushrooms-test*)
-  (defparameter mushrooms-datamatrix-test datamat)
-  (defparameter mushrooms-target-test target))
-
-(write-to-r-format-from-clol-dataset *mushrooms-train* "/home/wiz/datasets/mushrooms-for-R")
-(write-to-r-format-from-clol-dataset *mushrooms-test* "/home/wiz/datasets/mushrooms-for-R.t")
+  (multiple-value-bind (datamat target)
+      (clol-dataset->datamatrix/target mushrooms-test)
+    (defparameter mushrooms-datamatrix-test datamat)
+    (defparameter mushrooms-target-test target)))
 
 ;; decision tree
 
 (defparameter mushrooms-dtree
-  (make-dtree 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target :max-depth 20))
+  (make-dtree 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
+              :max-depth 15 :min-region-samples 5 :n-trial 10))
+
 (traverse #'node-information-gain (dtree-root mushrooms-dtree))
+
 (test-dtree mushrooms-dtree mushrooms-datamatrix-test mushrooms-target-test)
+
 ;; => 98.21092278719398d0
 
 (time
  (defparameter mushrooms-forest
    (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
-                :n-tree 500 :bagging-ratio 1.0 :min-region-samples 1 :n-trial 10 :max-depth 10)))
+                :n-tree 500 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 10)))
 
 (time
  (defparameter mushrooms-forest
@@ -488,11 +387,11 @@
 
 (time
  (defparameter mushrooms-refine-dataset
-   (make-refine-dataset mushrooms-forest mushrooms-datamatrix mushrooms-target)))
+   (make-refine-dataset mushrooms-forest mushrooms-datamatrix)))
 
 (time
  (defparameter mushrooms-refine-test
-   (make-refine-dataset mushrooms-forest mushrooms-datamatrix-test mushrooms-target-test)))
+   (make-refine-dataset mushrooms-forest mushrooms-datamatrix-test)))
 
 (defparameter mushrooms-refine-learner (make-refine-learner mushrooms-forest 1.0d0))
 
@@ -758,6 +657,19 @@
 (time
  (defparameter covtype-leaf-indices-vector-test
    (make-leaf-indices-vector covtype-forest covtype-datamatrix-test)))
+
+
+(time
+ (train-refine-learner-fast covtype-refine-learner covtype-leaf-indices-vector covtype-target))
+
+(time
+ (test-refine-learner-fast covtype-refine-learner covtype-leaf-indices-vector covtype-target))
+
+(time
+ (train-refine-learner-parallel covtype-refine-learner covtype-leaf-indices-vector covtype-target))
+
+(time
+ (test-refine-learner-parallel covtype-refine-learner covtype-leaf-indices-vector covtype-target))
 
 (loop repeat 10 do
   (train-refine-learner-fast covtype-refine-learner covtype-leaf-indices-vector covtype-target)
