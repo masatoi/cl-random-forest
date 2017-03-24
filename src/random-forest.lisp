@@ -516,7 +516,12 @@
         (clol:make-sparse-arow input-dim gamma))))
 
 (defun predict-refine-learner (forest refine-learner datamatrix datum-index)
-  (clol:one-vs-rest-predict refine-learner (make-refine-vector forest datamatrix datum-index)))
+  (let ((sv (make-refine-vector forest datamatrix datum-index)))
+    (etypecase refine-learner
+      (cl-online-learning::sparse-arow
+       (if (> (clol:sparse-arow-predict refine-learner sv) 0d0) 1 0))
+      (cl-online-learning::one-vs-rest
+       (clol:one-vs-rest-predict refine-learner sv)))))
 
 ;; Make vector of leaf-index vectors
 (defun make-refine-dataset (forest datamatrix)
@@ -564,7 +569,7 @@
     (loop for i from 0 to (1- (length refine-dataset)) do
       (setf (clol.vector:sparse-vector-index-vector sv) (svref refine-dataset i))
       (when (= (aref target i)
-               (if (< (clol:sparse-arow-predict refine-learner sv) 0d0) 0 1))                   
+               (if (> (clol:sparse-arow-predict refine-learner sv) 0d0) 1 0))
         (incf n-correct)))
     (calc-accuracy n-correct len :quiet-p quiet-p)))
   
