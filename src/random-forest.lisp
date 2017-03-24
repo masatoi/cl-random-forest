@@ -544,6 +544,30 @@
        (forest-dtree-list forest))
       refine-dataset)))
 
+(defun train-refine-learner-binary (refine-learner refine-dataset target)
+  (let* ((n-tree (length (svref refine-dataset 0)))
+         (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
+         (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+         (sv (clol.vector:make-sparse-vector sv-index sv-val)))
+    (loop for i from 0 to (1- (length refine-dataset)) do
+      (setf (clol.vector:sparse-vector-index-vector sv) (svref refine-dataset i))
+      (clol:sparse-arow-update refine-learner sv
+                               (if (= (aref target i) 0) -1d0 1d0)))))
+
+(defun test-refine-learner-binary (refine-learner refine-dataset target &key quiet-p)
+  (let* ((len (length refine-dataset))
+         (n-tree (length (svref refine-dataset 0)))
+         (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
+         (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+         (sv (clol.vector:make-sparse-vector sv-index sv-val))
+         (n-correct 0))
+    (loop for i from 0 to (1- (length refine-dataset)) do
+      (setf (clol.vector:sparse-vector-index-vector sv) (svref refine-dataset i))
+      (when (= (aref target i)
+               (if (< (clol:sparse-arow-predict refine-learner sv) 0d0) 0 1))                   
+        (incf n-correct)))
+    (calc-accuracy n-correct len :quiet-p quiet-p)))
+  
 ;; Parallel multiclass classifiers
 
 (defun train-refine-learner-multiclass (refine-learner refine-dataset target)
@@ -621,6 +645,22 @@
             (maximize-activation/count activation-matrix end-of-mini-batch target max-cycle))
 
       (calc-accuracy n-correct len :quiet-p quiet-p))))
+
+(defun train-refine-learner (refine-learner refine-dataset target)
+  (etypecase refine-learner
+    (cl-online-learning::sparse-arow
+     (train-refine-learner-binary refine-learner refine-dataset target))
+    (cl-online-learning::one-vs-rest
+     (train-refine-learner-multiclass refine-learner refine-dataset target))))
+
+(defun test-refine-learner (refine-learner refine-dataset target
+                            &key quiet-p (mini-batch-size 1000))
+  (etypecase refine-learner
+    (cl-online-learning::sparse-arow
+     (test-refine-learner-binary refine-learner refine-dataset target :quiet-p quiet-p))
+    (cl-online-learning::one-vs-rest
+     (test-refine-learner-multiclass refine-learner refine-dataset target
+                                     :quiet-p quiet-p :mini-batch-size mini-batch-size))))
 
 ;;; Global pruning
 
