@@ -658,6 +658,31 @@
      (test-refine-learner-multiclass refine-learner refine-dataset target
                                      :quiet-p quiet-p :mini-batch-size mini-batch-size))))
 
+;; Training process with detection of convergence
+
+(defun train-refine-learner-process-inner
+    (refine-learner train-dataset train-target test-dataset test-target &key (max-epoch 100))
+  (let ((tmp-learner nil)
+        (max-accuracy 0.0))
+    (loop repeat max-epoch do
+      (setf tmp-learner
+            (etypecase refine-learner
+              (cl-online-learning::sparse-arow (clol::copy-sparse-arow refine-learner))
+              (cl-online-learning::one-vs-rest (clol::copy-one-vs-rest refine-learner))))
+      (train-refine-learner refine-learner train-dataset train-target)
+      (let ((accuracy (test-refine-learner refine-learner test-dataset test-target :quiet-p t)))
+        (if (> accuracy max-accuracy)
+            (setf max-accuracy accuracy)
+            (return))))
+    (values tmp-learner max-accuracy)))
+
+(defmacro train-refine-learner-process
+    (refine-learner train-dataset train-target test-dataset test-target &key (max-epoch 100))
+  `(setf ,refine-learner
+         (train-refine-learner-process-inner
+          ,refine-learner ,train-dataset ,train-target ,test-dataset ,test-target
+          :max-epoch ,max-epoch)))
+
 ;;; Global pruning
 
 (defmacro square (x)
