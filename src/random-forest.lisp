@@ -53,8 +53,7 @@
 (defstruct (node (:constructor %make-node)
                  (:print-object %print-node))
   sample-indices depth test-attribute test-threshold information-gain 
-  left-node right-node dtree
-  leaf-index leaf-weight)
+  left-node right-node dtree leaf-index)
 
 (defun %print-node (obj stream)
   (format stream "#S(NODE :TEST ~A :GAIN ~A)"
@@ -465,12 +464,11 @@
              (type (simple-array double-float) datamatrix)
              (type (simple-array fixnum) index-offset)
              (type fixnum datum-index n-tree))
-    (let ((leaf-index-weight-pairs
+    (let ((leaf-index-list
             (mapcar/pmapcar
              (lambda (dtree)
                (let ((node (find-leaf (dtree-root dtree) datamatrix datum-index)))
-                 (cons (node-leaf-index node)
-                       (node-leaf-weight node))))
+                 (node-leaf-index node)))
              (forest-dtree-list forest))))
       (let ((sv-index (make-array (forest-n-tree forest) :element-type 'fixnum))
             (sv-val (make-array (forest-n-tree forest)
@@ -478,21 +476,14 @@
         (declare (type (simple-array fixnum) sv-index)
                  (type (simple-array double-float) sv-val))
         (loop for i fixnum from 0 to (1- n-tree)
-              for index-weight-pair in leaf-index-weight-pairs
-              do (let ((index (car index-weight-pair))
-                       (weight (cdr index-weight-pair)))
-                   (declare (type fixnum index)
-                            (type double-float weight))
-                   (setf (aref sv-index i) (+ index (aref index-offset i))
-                         (aref sv-val i) weight)))
+              for index fixnum in leaf-index-list
+              do (setf (aref sv-index i) (+ index (aref index-offset i))))
         (clol.vector:make-sparse-vector sv-index sv-val)))))
 
 (defun set-leaf-index! (dtree)
   (setf (dtree-max-leaf-index dtree) 0)
   (do-leaf (lambda (node)
              (setf (node-leaf-index node) (dtree-max-leaf-index dtree))
-             (if (null (node-leaf-weight node))
-                 (setf (node-leaf-weight node) 1d0))
              (incf (dtree-max-leaf-index dtree)))
     (dtree-root dtree)))
 
@@ -736,11 +727,6 @@
 ;; Delete non-significant nodes
 
 (defun delete-children! (node)
-  ;; update leaf-weight
-  (setf (node-leaf-weight node)
-        (+ (node-leaf-weight (node-left-node node))
-           (node-leaf-weight (node-right-node node))))
-  ;; delete children
   (setf (node-test-attribute node) nil
         (node-test-threshold node) nil
         (node-left-node node) nil
