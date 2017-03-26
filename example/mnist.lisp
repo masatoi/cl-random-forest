@@ -44,7 +44,7 @@
 ;; 42.717 seconds (1 core), 13.24 seconds (4 core)
 (defparameter mnist-forest-tall
   (make-forest mnist-n-class mnist-dim mnist-datamatrix mnist-target
-               :n-tree 100 :bagging-ratio 1.0 :max-depth 100 :n-trial 27 :min-region-samples 5))
+               :n-tree 100 :bagging-ratio 1.0 :max-depth 15 :n-trial 27 :min-region-samples 5))
 
 ;; 14.2 seconds, Accuracy: 96.62%
 (test-forest mnist-forest-tall mnist-datamatrix-test mnist-target-test)
@@ -53,58 +53,30 @@
 
 ;; Generate sparse data from Random Forest
 
-;; 20.250 seconds (1 core), 8.366 seconds (4 core)
-(defparameter mnist-refine-dataset
-  (make-refine-dataset mnist-forest mnist-datamatrix mnist-target))
+;; xxx seconds (1 core), 2.334 seconds (4 core)
+(time
+ (defparameter mnist-refine-dataset
+   (make-refine-dataset mnist-forest mnist-datamatrix)))
 
-;; 3.421 seconds (1 core), 1.444 seconds (4 core)
-(defparameter mnist-refine-test
-  (make-refine-dataset mnist-forest mnist-datamatrix-test mnist-target-test))
-
+;; xxx seconds (1 core), 0.322 seconds (4 core)
+(time
+ (defparameter mnist-refine-test
+   (make-refine-dataset mnist-forest mnist-datamatrix-test)))
+ 
 (defparameter mnist-refine-learner (make-refine-learner mnist-forest))
 
-;; 11.046 seconds, Accuracy: 98.29%
-(loop repeat 5 do
-  (clol:train mnist-refine-learner mnist-refine-dataset)
-  (clol:test  mnist-refine-learner mnist-refine-test))
-
-;; In case of without making dataset
-(time (train-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix mnist-target))
-(time (test-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix-test mnist-target-test))
-
-;; 1.880 seconds
+;; 2.281 seconds Accuracy: 98.21%
 (time
- (defparameter mnist-leaf-index-matrix
-   (make-leaf-index-matrix mnist-forest mnist-datamatrix)))
+ (train-refine-learner-process mnist-refine-learner mnist-refine-dataset mnist-target
+                               mnist-refine-test mnist-target-test))
 
-(train-refine-learner-fast mnist-refine-learner mnist-leaf-index-matrix mnist-target)
+(test-refine-learner mnist-refine-learner mnist-refine-test mnist-target-test)
 
+;; 4.152 seconds seconds, Accuracy: 98.29%
 (time
- (defparameter mnist-leaf-indices-vector
-   (make-leaf-indices-vector mnist-forest mnist-datamatrix)))
-
-(time
- (defparameter mnist-leaf-indices-vector-test
-   (make-leaf-indices-vector mnist-forest mnist-datamatrix-test)))
-
-(time
- (train-refine-learner-fast mnist-refine-learner mnist-leaf-indices-vector mnist-target))
-
-(time
- (train-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector mnist-target))
-
-(time
- (test-refine-learner-fast mnist-refine-learner mnist-leaf-indices-vector-test mnist-target-test))
-
-(time
- (test-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector-test mnist-target-test))
-
-(loop repeat 10 do
-  (train-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector mnist-target)
-  ;; (format t "train: ")
-  ;; (test-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector mnist-target)
-  (format t "test: ")
-  (test-refine-learner-parallel mnist-refine-learner mnist-leaf-indices-vector-test mnist-target-test))
+ (loop repeat 5 do
+   (train-refine-learner mnist-refine-learner mnist-refine-dataset mnist-target)
+   (test-refine-learner mnist-refine-learner mnist-refine-test mnist-target-test)))
 
 ;; Make a prediction
 (predict-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix-test 0)
@@ -116,31 +88,28 @@
 (length (collect-leaf-parent mnist-forest)) ; => 93228
 
 ;; Re-learning refine learner
-(defparameter mnist-refine-dataset (make-refine-dataset mnist-forest mnist-datamatrix mnist-target))
-(defparameter mnist-refine-test (make-refine-dataset mnist-forest mnist-datamatrix-test mnist-target-test))
+(defparameter mnist-refine-dataset (make-refine-dataset mnist-forest mnist-datamatrix))
+(defparameter mnist-refine-test (make-refine-dataset mnist-forest mnist-datamatrix-test))
 (defparameter mnist-refine-learner (make-refine-learner mnist-forest))
-(loop repeat 5 do
-  (clol:train mnist-refine-learner mnist-refine-dataset)
-  (clol:test  mnist-refine-learner mnist-refine-test))
+(time
+ (loop repeat 10 do
+   (train-refine-learner mnist-refine-learner mnist-refine-dataset mnist-target)
+   (test-refine-learner mnist-refine-learner mnist-refine-test mnist-target-test)))
+
 ;; Accuracy: Accuracy: 98.27%
 
-;; (loop repeat 10 do
-;;   (sb-ext:gc :full t)
-;;   (room)
-
-;;   (format t "~%making mnist-refine-dataset~%")
-;;   (defparameter mnist-refine-dataset (make-refine-dataset mnist-forest mnist-datamatrix mnist-target))
-
-;;   (format t "~%making mnist-refine-test~%")
-;;   (defparameter mnist-refine-test (make-refine-dataset mnist-forest mnist-datamatrix-test mnist-target-test))
-
-;;   (format t "~%re-learning~%")
-;;   (defparameter mnist-refine-learner (make-refine-learner mnist-forest))
-;;   (loop repeat 5 do
-;;     (clol:train mnist-refine-learner mnist-refine-dataset)
-;;     (clol:test  mnist-refine-learner mnist-refine-test))
-  
-;;   (format t "~%Pruning... ~%")
-;;   (pruning! mnist-forest mnist-refine-learner 0.01)
-
-;;   (format t "leaf-size: ~A ~%" (length (collect-leaf-parent mnist-forest))))
+(loop repeat 10 do
+  (sb-ext:gc :full t)
+;  (room)
+  (format t "~%Making mnist-refine-dataset~%")
+  (defparameter mnist-refine-dataset (make-refine-dataset mnist-forest mnist-datamatrix))
+  (format t "Making mnist-refine-test~%")
+  (defparameter mnist-refine-test (make-refine-dataset mnist-forest mnist-datamatrix-test))
+  (format t "Re-learning~%")
+  (defparameter mnist-refine-learner (make-refine-learner mnist-forest))
+  (train-refine-learner-process mnist-refine-learner mnist-refine-dataset mnist-target
+                                mnist-refine-test mnist-target-test)
+  (test-refine-learner mnist-refine-learner mnist-refine-test mnist-target-test)
+  (format t "Pruning. leaf-size: ~A" (length (collect-leaf-parent mnist-forest)))
+  (pruning! mnist-forest mnist-refine-learner 0.5)
+  (format t " -> ~A ~%" (length (collect-leaf-parent mnist-forest))))

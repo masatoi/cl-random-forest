@@ -320,12 +320,12 @@
                                             mushrooms-dim)))
   (dolist (datum mushrooms-train)
     (if (> (car datum) 0d0)
-        (setf (car datum) 0)
-        (setf (car datum) 1)))
+        (setf (car datum) 1)
+        (setf (car datum) 0)))
   (dolist (datum mushrooms-test)
     (if (> (car datum) 0d0)
-        (setf (car datum) 0)
-        (setf (car datum) 1)))
+        (setf (car datum) 1)
+        (setf (car datum) 0)))
 
   (multiple-value-bind (datamat target)
       (clol-dataset->datamatrix/target mushrooms-train)
@@ -340,23 +340,24 @@
 ;; decision tree
 
 (defparameter mushrooms-dtree
-  (make-dtree 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
+  (make-dtree 2 mushrooms-dim mushrooms-datamatrix mushrooms-target
               :max-depth 15 :min-region-samples 5 :n-trial 10))
 
 (traverse #'node-information-gain (dtree-root mushrooms-dtree))
 
+(test-dtree mushrooms-dtree mushrooms-datamatrix mushrooms-target)
 (test-dtree mushrooms-dtree mushrooms-datamatrix-test mushrooms-target-test)
 
 ;; => 98.21092278719398d0
 
 (time
  (defparameter mushrooms-forest
-   (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
-                :n-tree 500 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 10)))
+   (make-forest 2 mushrooms-dim mushrooms-datamatrix mushrooms-target
+                :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10)))
 
 (time
  (defparameter mushrooms-forest
-   (make-forest 2 *mushrooms-dim* mushrooms-datamatrix mushrooms-target
+   (make-forest 2 mushrooms-dim mushrooms-datamatrix mushrooms-target
                 :n-tree 100 :bagging-ratio 1.0 :min-region-samples 1 :n-trial 10 :max-depth 10)))
 
 ;; Evaluation took:
@@ -395,10 +396,23 @@
 
 (defparameter mushrooms-refine-learner (make-refine-learner mushrooms-forest 1.0d0))
 
+(train-refine-learner-process mushrooms-refine-learner
+                              mushrooms-refine-dataset mushrooms-target
+                              mushrooms-refine-test mushrooms-target-test)
+
+(train-refine-learner mushrooms-refine-learner mushrooms-refine-dataset mushrooms-target)
+(test-refine-learner mushrooms-refine-learner mushrooms-refine-dataset mushrooms-target)
+(test-refine-learner mushrooms-refine-learner mushrooms-refine-test mushrooms-target-test)
+
+(predict-refine-learner mushrooms-forest mushrooms-refine-learner
+                        mushrooms-datamatrix 2)
+
+(aref mushrooms-target 2)
+
 (time
  (loop repeat 10 do
-   (clol:train mushrooms-refine-learner mushrooms-refine-dataset)
-   (clol:test  mushrooms-refine-learner mushrooms-refine-test)))
+   (train-refine-learner-binary mushrooms-refine-learner mushrooms-refine-dataset mushrooms-target)
+   (test-refine-learner-binary mushrooms-refine-learner mushrooms-refine-test mushrooms-target-test)))
 
 ;; pruning
 (length (collect-leaf-parent mushrooms-forest)) ; => 1691
@@ -414,6 +428,25 @@
 (loop repeat 5 do
   (clol:train mushrooms-refine-learner mushrooms-refine-dataset)
   (clol:test  mushrooms-refine-learner mushrooms-refine-test))
+
+;; pruning process
+
+(loop repeat 100 do
+  (sb-ext:gc :full t)
+  (room)
+  (format t "~%making mushrooms-refine-dataset~%")
+  (defparameter mushrooms-refine-dataset (make-refine-dataset mushrooms-forest mushrooms-datamatrix))
+  (format t "~%making mushrooms-refine-test~%")
+  (defparameter mushrooms-refine-test (make-refine-dataset mushrooms-forest mushrooms-datamatrix-test))
+  (format t "~%re-learning~%")
+  (defparameter mushrooms-refine-learner (make-refine-learner mushrooms-forest))
+  (loop repeat 5 do
+    (train-refine-learner mushrooms-refine-learner mushrooms-refine-dataset mushrooms-target)
+    (test-refine-learner mushrooms-refine-learner mushrooms-refine-test mushrooms-target-test))
+  
+  (format t "~%Pruning. leaf-size: ~A" (length (collect-leaf-parent mushrooms-forest)))
+  (pruning! mushrooms-forest mushrooms-refine-learner 0.1)
+  (format t " -> ~A ~%" (length (collect-leaf-parent mushrooms-forest))))
 
 ;;;;;;;;;;;; covtype.binary
 
@@ -483,16 +516,18 @@
 ;; random-forest
 (defparameter a1a-forest
   (make-forest 2 a1a-dim a1a-datamatrix a1a-target
-               :n-tree 500 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 5))
+               :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10))
+
 (test-forest a1a-forest a1a-datamatrix a1a-target)
 (test-forest a1a-forest a1a-datamatrix-test a1a-target-test)
 
-(defparameter a1a-refine-dataset (make-refine-dataset a1a-forest a1a-datamatrix a1a-target))
-(defparameter a1a-refine-test (make-refine-dataset a1a-forest a1a-datamatrix-test a1a-target-test))
+(defparameter a1a-refine-dataset (make-refine-dataset a1a-forest a1a-datamatrix))
+(defparameter a1a-refine-test (make-refine-dataset a1a-forest a1a-datamatrix-test))
 (defparameter a1a-refine-learner (make-refine-learner a1a-forest 1.0d0))
+
 (loop repeat 10 do
-  (clol:train a1a-refine-learner a1a-refine-dataset)
-  (clol:test  a1a-refine-learner a1a-refine-test))
+   (train-refine-learner-binary a1a-refine-learner a1a-refine-dataset a1a-target)
+   (test-refine-learner-binary a1a-refine-learner a1a-refine-test a1a-target-test))
 
 ;;; a9a
 
@@ -527,16 +562,16 @@
 ;; random-forest
 (defparameter a9a-forest
   (make-forest 2 a9a-dim a9a-datamatrix a9a-target
-               :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 5))
+               :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10))
 (test-forest a9a-forest a9a-datamatrix a9a-target)
 (test-forest a9a-forest a9a-datamatrix-test a9a-target-test)
 
-(defparameter a9a-refine-dataset (make-refine-dataset a9a-forest a9a-datamatrix a9a-target))
-(defparameter a9a-refine-test (make-refine-dataset a9a-forest a9a-datamatrix-test a9a-target-test))
+(defparameter a9a-refine-dataset (make-refine-dataset a9a-forest a9a-datamatrix))
+(defparameter a9a-refine-test (make-refine-dataset a9a-forest a9a-datamatrix-test))
 (defparameter a9a-refine-learner (make-refine-learner a9a-forest 1.0d0))
-(loop repeat 10 do
-  (clol:train a9a-refine-learner a9a-refine-dataset)
-  (clol:test  a9a-refine-learner a9a-refine-test))
+(loop repeat 50 do
+  (train-refine-learner a9a-refine-learner a9a-refine-dataset a9a-target)
+  (test-refine-learner a9a-refine-learner a9a-refine-test a9a-target-test))
 
 ;;; 
 
@@ -565,9 +600,10 @@
 (test-dtree letter-dtree letter-datamatrix-test letter-target-test)
 
 ;; random-forest
-(defparameter letter-forest
-  (make-forest letter-n-class letter-dim letter-datamatrix letter-target
-               :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10))
+(time 
+ (defparameter letter-forest
+   (make-forest letter-n-class letter-dim letter-datamatrix letter-target
+                :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 15)))
 (test-forest letter-forest letter-datamatrix-test letter-target-test)
 ;; max-depth=5: 73.22% / max-depth=10: 89.03% / max-depth=15: 91.4%
 
@@ -576,26 +612,37 @@
                :n-tree 100 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 100))
 (test-forest letter-forest-tall letter-datamatrix-test letter-target-test) ; 96.82%
 
-(defparameter letter-refine-dataset
-  (make-refine-dataset letter-forest letter-datamatrix letter-target))
+(time
+ (defparameter letter-refine-dataset
+   (make-refine-dataset letter-forest letter-datamatrix)))
 
-(defparameter letter-refine-test
-  (make-refine-dataset letter-forest letter-datamatrix-test letter-target-test))
+(time
+ (defparameter letter-refine-test
+   (make-refine-dataset letter-forest letter-datamatrix-test)))
 
 (defparameter letter-refine-learner (make-refine-learner letter-forest 1.0d0))
 
+(time (train-refine-learner-process
+       letter-refine-learner letter-refine-dataset letter-target
+       letter-refine-test letter-target-test))
+
 (loop repeat 10 do
-  (clol:train letter-refine-learner letter-refine-dataset)
-  (clol:test  letter-refine-learner letter-refine-test))
+  (train-refine-learner letter-refine-learner letter-refine-dataset letter-target)
+  (test-refine-learner  letter-refine-learner letter-refine-test letter-target-test))
 ;; max-depth=5: 95.880005% / max-depth=10: 97.259995% / max-depth=15: 97.34%
 
 ;;;;; covtype
 
+;; Shuffle and split
+;; $ shuf -o covtype.scale.shuf covtype.scale
+;; $ split -348607 covtype.scale.shuf covtype.scale.shuf
+
+(setf lparallel:*kernel* (lparallel:make-kernel 4))
 (defparameter covtype-dim 54)
 (defparameter covtype-n-class 7)
 
-(let ((covtype-train (clol.utils:read-data "/home/wiz/datasets/covtype.scale" covtype-dim :multiclass-p t))
-      (covtype-test (clol.utils:read-data "/home/wiz/datasets/covtype.scale.t" covtype-dim :multiclass-p t)))
+(let ((covtype-train (clol.utils:read-data "/home/wiz/datasets/covtype.scale.train" covtype-dim :multiclass-p t))
+      (covtype-test (clol.utils:read-data "/home/wiz/datasets/covtype.scale.test" covtype-dim :multiclass-p t)))
   (multiple-value-bind (datamat target)
       (clol-dataset->datamatrix/target covtype-train)
     (defparameter covtype-datamatrix datamat)
@@ -618,67 +665,108 @@
                 :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 20 :max-depth 15)))
 (test-forest covtype-forest covtype-datamatrix-test covtype-target-test)
 ;; max-depth=5,n-tree=100: 2.861 seconds
+;; max-depth=10,n-tree=500: 14.975 seconds
+;; max-depth=15,n-tree=500,n-trial 20: 31.005 seconds
 
-(defparameter covtype-forest-tall
-  (make-forest covtype-n-class covtype-dim covtype-datamatrix covtype-target
-               :n-tree 100 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 100))
-(test-forest covtype-forest-tall covtype-datamatrix-test covtype-target-test) ; 96.82%
+(time
+ (defparameter covtype-forest-tall
+   (make-forest covtype-n-class covtype-dim covtype-datamatrix covtype-target
+                :n-tree 100 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 25)))
 
-(defparameter covtype-refine-dataset
-  (make-refine-dataset covtype-forest covtype-datamatrix covtype-target))
-;; 1.787 seconds
+(time
+ (defparameter covtype-refine-dataset
+   (make-refine-dataset covtype-forest covtype-datamatrix)))
+;; max-depth=10,n-tree=500: 4.923 seconds
+;; max-depth=15,n-tree=500: 7.669 seconds
 
-(defparameter covtype-refine-test
-  (make-refine-dataset covtype-forest covtype-datamatrix-test covtype-target-test))
+(time
+ (defparameter covtype-refine-test
+   (make-refine-dataset covtype-forest covtype-datamatrix-test)))
+;; max-depth=10,n-tree=500: 2.797 seconds
+;; max-depth=15,n-tree=500: 5.422 seconds
 
 (defparameter covtype-refine-learner (make-refine-learner covtype-forest 1.0d0))
 
+(time
+ (train-refine-learner-process covtype-refine-learner
+                               covtype-refine-dataset covtype-target
+                               covtype-reinfe-test    covtype-target-test))
+
+(time
+ (loop repeat 10 do
+   (train-refine-learner covtype-refine-learner covtype-refine-dataset covtype-target)
+   (test-refine-learner  covtype-refine-learner covtype-refine-test covtype-target-test)))
+;; max-depth=15,n-tree=500: 75.847 seconds
+;; max-depth=10: 92.87623% / max-depth=15: 96.00137%
+
+;; Pruning
 (loop repeat 10 do
-  (clol:train covtype-refine-learner covtype-refine-dataset)
-  (clol:test  covtype-refine-learner covtype-refine-test))
-;; max-depth=5: 95.880005% / max-depth=10: 97.259995% / max-depth=15: 97.34%
-
-;; In case of without making dataset
-(loop repeat 5 do
-  (time (train-refine-learner covtype-forest covtype-refine-learner covtype-datamatrix covtype-target))
-  (time (test-refine-learner covtype-forest covtype-refine-learner covtype-datamatrix-test covtype-target-test)))
-;; 72.57374%
-
-;;  4.495 seconds of real time
-(time
- (defparameter covtype-leaf-index-matrix
-   (make-leaf-index-matrix covtype-forest covtype-datamatrix)))
-
-;; 4.221 seconds
-(time
- (defparameter covtype-leaf-indices-vector
-   (make-leaf-indices-vector covtype-forest covtype-datamatrix)))
-
-(time
- (defparameter covtype-leaf-indices-vector-test
-   (make-leaf-indices-vector covtype-forest covtype-datamatrix-test)))
-
-
-(time
- (train-refine-learner-fast covtype-refine-learner covtype-leaf-indices-vector covtype-target))
-
-(time
- (test-refine-learner-fast covtype-refine-learner covtype-leaf-indices-vector covtype-target))
-
-(time
- (train-refine-learner-parallel covtype-refine-learner covtype-leaf-indices-vector covtype-target))
-
-(time
- (test-refine-learner-parallel covtype-refine-learner covtype-leaf-indices-vector covtype-target))
-
-(loop repeat 10 do
-  (train-refine-learner-fast covtype-refine-learner covtype-leaf-indices-vector covtype-target)
-  (format t "train: ")
-  (test-refine-learner-fast covtype-refine-learner covtype-leaf-indices-vector covtype-target)
-  (format t "test: ")
-  (test-refine-learner-fast covtype-refine-learner covtype-leaf-indices-vector-test covtype-target-test))
-
+  (setf covtype-refine-dataset nil
+        covtype-refine-test nil)
+  (sb-ext:gc :full t)
+  (room)
+  (format t "~%Making covtype-refine-dataset~%")
+  (setf covtype-refine-dataset (make-refine-dataset covtype-forest covtype-datamatrix))
+  (format t "Making covtype-refine-test~%")
+  (setf covtype-refine-test (make-refine-dataset covtype-forest covtype-datamatrix-test))
+  (format t "Re-learning~%")
+  (setf covtype-refine-learner (make-refine-learner covtype-forest))
+  (loop repeat 10 do
+    (train-refine-learner covtype-refine-learner covtype-refine-dataset covtype-target)
+    (test-refine-learner  covtype-refine-learner covtype-refine-test covtype-target-test))
+  (format t "Pruning. leaf-size: ~A" (length (collect-leaf-parent covtype-forest)))
+  (pruning! covtype-forest covtype-refine-learner 0.5)
+  (format t " -> ~A ~%" (length (collect-leaf-parent covtype-forest))))
 
 ;; usps
-;; Char74k
-;; covtype
+
+(defparameter usps-dim 256)
+(defparameter usps-n-class 10)
+(defparameter usps-train (clol.utils:read-data "/home/wiz/datasets/usps" usps-dim :multiclass-p t))
+(defparameter usps-test (clol.utils:read-data "/home/wiz/datasets/usps.t" usps-dim :multiclass-p t))
+
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix/target usps-train)
+  (defparameter usps-datamatrix datamat)
+  (defparameter usps-target target))
+
+(multiple-value-bind (datamat target)
+    (clol-dataset->datamatrix/target usps-test)
+  (defparameter usps-datamatrix-test datamat)
+  (defparameter usps-target-test target))
+
+;; dtree
+(defparameter usps-dtree
+  (make-dtree usps-n-class usps-dim usps-datamatrix usps-target :max-depth 10))
+(test-dtree usps-dtree usps-datamatrix-test usps-target-test)
+
+;; random-forest
+(time 
+ (defparameter usps-forest
+   (make-forest usps-n-class usps-dim usps-datamatrix usps-target
+                :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 16 :max-depth 15)))
+(test-forest usps-forest usps-datamatrix-test usps-target-test)
+;; max-depth=5: 73.22% / max-depth=10: 89.03% / max-depth=15: 91.4%
+
+(defparameter usps-forest-tall
+  (make-forest usps-n-class usps-dim usps-datamatrix usps-target
+               :n-tree 100 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 100))
+(test-forest usps-forest-tall usps-datamatrix-test usps-target-test) ; 96.82%
+
+(time
+ (defparameter usps-refine-dataset
+   (make-refine-dataset usps-forest usps-datamatrix)))
+
+(time
+ (defparameter usps-refine-test
+   (make-refine-dataset usps-forest usps-datamatrix-test)))
+
+(defparameter usps-refine-learner (make-refine-learner usps-forest 1.0d0))
+
+(time (train-refine-learner-process
+       usps-refine-learner usps-refine-dataset usps-target
+       usps-refine-test usps-target-test))
+
+(loop repeat 10 do
+  (train-refine-learner usps-refine-learner usps-refine-dataset usps-target)
+  (test-refine-learner  usps-refine-learner usps-refine-test usps-target-test))
