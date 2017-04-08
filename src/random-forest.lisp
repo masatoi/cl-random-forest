@@ -3,7 +3,12 @@
 (in-package :cl-user)
 (defpackage cl-random-forest
   (:use :cl :cl-random-forest.utils)
-  (:nicknames :clrf))
+  (:nicknames :clrf)
+  (:export :make-dtree :predict-dtree :test-dtree
+           :make-forest :predict-forest :test-forest
+           :make-refine-vector :make-refine-learner :predict-refine-learner :make-refine-dataset
+           :train-refine-learner :test-refine-learner :train-refine-learner-process
+           :pruning!))
 
 (in-package :cl-random-forest)
 
