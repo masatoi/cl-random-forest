@@ -1,0 +1,9 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q dynamic-space-size=2048 -- $0 "$@"
+|#
+
+(defun main (&rest argv)
+  (declare (ignorable argv))
+  (asdf:test-system :cl-random-forest))
