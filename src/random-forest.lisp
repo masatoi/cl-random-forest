@@ -245,12 +245,13 @@
       (setf (aref new-arr i) (aref arr i)))
     new-arr))
 
-(defun set-best-children! (n-trial node &optional (gain-test #'entropy))
+(defun set-best-children! (n-trial node)
   ;;(declare (optimize (speed 3) (safety 0)))
-  (let ((dtree (node-dtree node))
-        (max-children-gain most-negative-double-float)
-        (left-node (make-node nil node))
-        (right-node (make-node nil node)))
+  (let* ((dtree (node-dtree node))
+         (gain-test (dtree-gain-test dtree))
+         (max-children-gain most-negative-double-float)
+         (left-node (make-node nil node))
+         (right-node (make-node nil node)))
     (setf (node-left-node node) left-node
           (node-right-node node) right-node)
     (loop repeat n-trial do
