@@ -17,7 +17,7 @@
 (defstruct (dtree (:constructor %make-dtree)
                   (:print-object %print-dtree))
   n-class class-count-array datum-dim datamatrix target
-  root max-depth min-region-samples n-trial gain-test
+  root max-depth min-region-samples n-trial gain-test remove-sample-indices?
   tmp-arr1 tmp-index1 tmp-arr2 tmp-index2
   best-arr1 best-index1 best-arr2 best-index2
   max-leaf-index id)
@@ -30,7 +30,7 @@
 
 (defun make-dtree (n-class datum-dim datamatrix target
                    &key (max-depth 5) (min-region-samples 1) (n-trial 10)
-                     (gain-test #'entropy) sample-indices)
+                     (gain-test #'entropy) (remove-sample-indices? t) sample-indices)
   (let* ((len (if sample-indices
                   (length sample-indices)
                   (array-dimension datamatrix 0)))
@@ -43,6 +43,7 @@
                  :max-depth max-depth :min-region-samples min-region-samples
                  :n-trial n-trial
                  :gain-test gain-test
+                 :remove-sample-indices? remove-sample-indices?
                  :tmp-arr1 (make-array len :element-type 'fixnum :initial-element 0)
                  :tmp-index1 0
                  :tmp-arr2 (make-array len :element-type 'fixnum :initial-element 0)
@@ -246,7 +247,6 @@
     new-arr))
 
 (defun set-best-children! (n-trial node)
-  ;;(declare (optimize (speed 3) (safety 0)))
   (let* ((dtree (node-dtree node))
          (gain-test (dtree-gain-test dtree))
          (max-children-gain most-negative-double-float)
@@ -280,6 +280,8 @@
           (make-partial-arr (dtree-best-arr1 dtree) (dtree-best-index1 dtree))
           (node-sample-indices right-node)
           (make-partial-arr (dtree-best-arr2 dtree) (dtree-best-index2 dtree)))
+    (when (dtree-remove-sample-indices? dtree)
+      (setf (node-sample-indices node) nil))
     node))
 
 (defun stop-split? (node)
@@ -382,7 +384,7 @@
 
 (defun make-forest (n-class datum-dim datamatrix target
                     &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
-                      (n-trial 10) (gain-test #'entropy))
+                      (n-trial 10) (gain-test #'entropy) (remove-sample-indices? t))
   (let ((forest (%make-forest
                  :n-tree n-tree
                  :bagging-ratio bagging-ratio
@@ -403,6 +405,7 @@
                   :min-region-samples min-region-samples
                   :n-trial n-trial
                   :gain-test gain-test
+                  :remove-sample-indices? remove-sample-indices?
                   :sample-indices (bootstrap-sample-indices
                                    (floor (* (array-dimension datamatrix 0) bagging-ratio))
                                    datamatrix)))
