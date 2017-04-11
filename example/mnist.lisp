@@ -46,6 +46,10 @@
   (make-forest mnist-n-class mnist-dim mnist-datamatrix mnist-target
                :n-tree 100 :bagging-ratio 1.0 :max-depth 15 :n-trial 27 :min-region-samples 5))
 
+(defparameter mnist-forest-tall
+  (make-forest mnist-n-class mnist-dim mnist-datamatrix mnist-target
+               :n-tree 100 :bagging-ratio 1.0 :max-depth 15 :n-trial 27 :min-region-samples 5))
+
 ;; 14.2 seconds, Accuracy: 96.62%
 (test-forest mnist-forest-tall mnist-datamatrix-test mnist-target-test)
 
@@ -100,7 +104,7 @@
 
 (loop repeat 10 do
   (sb-ext:gc :full t)
-;  (room)
+  (room)
   (format t "~%Making mnist-refine-dataset~%")
   (defparameter mnist-refine-dataset (make-refine-dataset mnist-forest mnist-datamatrix))
   (format t "Making mnist-refine-test~%")
