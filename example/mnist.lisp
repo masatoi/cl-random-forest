@@ -33,7 +33,7 @@
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 (setf lparallel:*kernel* nil)
 
-;; 6.238 seconds (1 core), 2.195 seconds (4 core)
+;; 6.199 seconds (1 core), 2.012 seconds (4 core)
 (defparameter mnist-forest
   (make-forest mnist-n-class mnist-dim mnist-datamatrix mnist-target
                :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5))
@@ -57,30 +57,26 @@
 
 ;; Generate sparse data from Random Forest
 
-;; xxx seconds (1 core), 2.334 seconds (4 core)
-(time
- (defparameter mnist-refine-dataset
-   (make-refine-dataset mnist-forest mnist-datamatrix)))
+;; 6.394 seconds (1 core), 1.811 seconds (4 core)
+(defparameter mnist-refine-dataset
+  (make-refine-dataset mnist-forest mnist-datamatrix))
 
-;; xxx seconds (1 core), 0.322 seconds (4 core)
-(time
- (defparameter mnist-refine-test
-   (make-refine-dataset mnist-forest mnist-datamatrix-test)))
- 
+;; 0.995 seconds (1 core), 0.322 seconds (4 core)
+(defparameter mnist-refine-test
+  (make-refine-dataset mnist-forest mnist-datamatrix-test))
+
 (defparameter mnist-refine-learner (make-refine-learner mnist-forest))
 
-;; 2.281 seconds Accuracy: 98.21%
-(time
- (train-refine-learner-process mnist-refine-learner mnist-refine-dataset mnist-target
-                               mnist-refine-test mnist-target-test))
+;; 4.347 seconds (1 core), 2.281 seconds (4 core), Accuracy: 98.259%
+(train-refine-learner-process mnist-refine-learner mnist-refine-dataset mnist-target
+                              mnist-refine-test mnist-target-test)
 
 (test-refine-learner mnist-refine-learner mnist-refine-test mnist-target-test)
 
-;; 4.152 seconds seconds, Accuracy: 98.29%
-(time
- (loop repeat 5 do
-   (train-refine-learner mnist-refine-learner mnist-refine-dataset mnist-target)
-   (test-refine-learner mnist-refine-learner mnist-refine-test mnist-target-test)))
+;; 5.859 seconds (1 core), 4.090 seconds (4 core), Accuracy: 98.29%
+(loop repeat 5 do
+  (train-refine-learner mnist-refine-learner mnist-refine-dataset mnist-target)
+  (test-refine-learner mnist-refine-learner mnist-refine-test mnist-target-test))
 
 ;; Make a prediction
 (predict-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix-test 0)
