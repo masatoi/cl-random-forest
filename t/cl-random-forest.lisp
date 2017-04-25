@@ -179,7 +179,7 @@
 (setf lparallel:*kernel* nil)
 
 (is
- (n-times-average 10
+ (n-times-average 100
    (trivial-garbage:gc :full t)
    (let ((a9a-forest
            (make-forest 2 a9a-dim a9a-datamatrix a9a-target
@@ -192,7 +192,7 @@
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 
 (is
- (n-times-average 10
+ (n-times-average 100
    (trivial-garbage:gc :full t)
    (let ((a9a-forest
            (make-forest 2 a9a-dim a9a-datamatrix a9a-target
@@ -205,7 +205,7 @@
 (setf lparallel:*kernel* nil)
 
 (is
- (n-times-average 10
+ (n-times-average 100
    (trivial-garbage:gc :full t)
    (let* ((a9a-forest
             (make-forest 2 a9a-dim a9a-datamatrix a9a-target
@@ -225,7 +225,7 @@
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 
 (is
- (n-times-average 10
+ (n-times-average 100
    (trivial-garbage:gc :full t)
    (let* ((a9a-forest
             (make-forest 2 a9a-dim a9a-datamatrix a9a-target
@@ -284,7 +284,7 @@
 (setf lparallel:*kernel* nil)
 
 (is
- (n-times-average 10
+ (n-times-average 100
    (trivial-garbage:gc :full t)
    (let ((letter-forest
            (make-forest letter-n-class letter-dim letter-datamatrix letter-target
@@ -297,7 +297,7 @@
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 
 (is
- (n-times-average 10
+ (n-times-average 100
    (trivial-garbage:gc :full t)
    (let ((letter-forest
            (make-forest letter-n-class letter-dim letter-datamatrix letter-target
@@ -310,7 +310,7 @@
 (setf lparallel:*kernel* nil)
 
 (is
- (n-times-average 10
+ (n-times-average 100
    (trivial-garbage:gc :full t)
    (let* ((letter-forest
             (make-forest letter-n-class letter-dim letter-datamatrix letter-target
@@ -329,7 +329,7 @@
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 
 (is
- (n-times-average 10
+ (n-times-average 100
    (trivial-garbage:gc :full t)
    (let* ((letter-forest
             (make-forest letter-n-class letter-dim letter-datamatrix letter-target

@@ -7,31 +7,24 @@
 (defparameter *n-class* 4)
 (defparameter *n-dim* 2)
 
-(defparameter *dataset*
-  '((0 . (-1d0 -2d0))
-    (0 . (-2d0 -1d0))
-    (1 . (1d0 -2d0))
-    (1 . (3d0 -1.5d0))
-    (2 . (-2d0 2d0))
-    (2 . (-3d0 1d0))
-    (2 . (-2d0 1d0))
-    (3 . (3d0 2d0))
-    (3 . (2d0 2d0))
-    (3 . (1d0 2d0))
-    (3 . (1d0 1d0))))
-
 (defparameter *target*
-  (make-array (length *dataset*) :element-type 'fixnum :initial-contents (mapcar #'car *dataset*)))
+  (make-array 11 :element-type 'fixnum
+                 :initial-contents '(0 0 1 1 2 2 2 3 3 3 3)))
 
 (defparameter *datamatrix*
-  (let ((arr (make-array (list (length *dataset*) *n-dim*) :element-type 'double-float)))
-    ;; set datamatrix
-    (loop for i from 0 below (length *dataset*)
-          for elem in *dataset* do
-            (loop for j from 0 to 1 do
-              (setf (aref arr i j)
-                    (nth j (cdr elem)))))
-    arr))
+  (make-array '(11 2) 
+              :element-type 'double-float
+              :initial-contents '((-1.0d0 -2.0d0)
+                                  (-2.0d0 -1.0d0)
+                                  (1.0d0 -2.0d0)
+                                  (3.0d0 -1.5d0)
+                                  (-2.0d0 2.0d0)
+                                  (-3.0d0 1.0d0)
+                                  (-2.0d0 1.0d0)
+                                  (3.0d0 2.0d0)
+                                  (2.0d0 2.0d0)
+                                  (1.0d0 2.0d0)
+                                  (1.0d0 1.0d0))))
   
 ;; make decision tree
 (defparameter *dtree* (make-dtree *n-class* *n-dim* *datamatrix* *target*))
