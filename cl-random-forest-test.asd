@@ -11,7 +11,6 @@
   :author ""
   :license ""
   :depends-on (:cl-random-forest
-               :chipz
                :uiop
                :trivial-garbage
                :prove)

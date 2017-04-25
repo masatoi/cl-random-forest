@@ -29,46 +29,6 @@
         (cat (format-directory p) (format-filename p))
         (format-directory p))))
 
-(defun gunzip (gzip-filename output-filename)
-  (with-open-file (gzstream gzip-filename :direction :input
-                                          :element-type '(unsigned-byte 8))
-    (with-open-file (stream output-filename :direction :output
-                                            :element-type '(unsigned-byte 8)
-                                            :if-exists :supersede)
-      (chipz:decompress stream 'chipz:gzip gzstream)
-      output-filename)))
-
-(defun bunzip2 (bzip2-filename output-filename)
-  (with-open-file (bz2stream bzip2-filename :direction :input
-                                            :element-type '(unsigned-byte 8))
-    (with-open-file (stream output-filename :direction :output
-                                            :element-type '(unsigned-byte 8)
-                                            :if-exists :supersede)
-      (chipz:decompress stream 'chipz:bzip2 bz2stream)
-      output-filename)))
-
-(defun fetch-mnist ()
-  (let ((file (merge-pathnames "mnist.scale.bz2" *dataset-dir*))
-        (raw-file (merge-pathnames "mnist.scale" *dataset-dir*))
-        (file.t (merge-pathnames "mnist.scale.t.bz2" *dataset-dir*))
-        (raw-file.t (merge-pathnames "mnist.scale.t" *dataset-dir*)))
-    ;; fetch dataset
-    (when (not (uiop:file-exists-p file))
-      (uiop:run-program
-       (list "wget"
-             "https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/multiclass/mnist.scale.bz2"
-             "-O" (format-pathname file))))
-    (when (not (uiop:file-exists-p file.t))
-      (uiop:run-program
-       (list "wget"
-             "https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/multiclass/mnist.scale.t.bz2"
-             "-O" (format-pathname file.t))))
-    ;; decompress
-    (when (not (uiop:file-exists-p raw-file))
-      (bunzip2 file raw-file))
-    (when (not (uiop:file-exists-p raw-file.t))
-      (bunzip2 file.t raw-file.t))))
-
 (defun fetch-letter ()
   (let ((file (merge-pathnames "letter.scale" *dataset-dir*))
         (file.t (merge-pathnames "letter.scale.t" *dataset-dir*)))
@@ -99,7 +59,7 @@
              "https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary/a9a.t"
              "-O" (format-pathname file.t))))))
 
-(defun approximately-equal (x y &optional (delta 0.001d0))
+(defun approximately-equal (x y &optional (delta 0.2d0))
   (flet ((andf (x y) (and x y))
          (close? (x y) (< (abs (- x y)) delta)))
     (etypecase x
@@ -117,15 +77,12 @@
 
 (format t ";;; Fetch dataset~%")
 
-(fetch-mnist)
 (fetch-letter)
 (fetch-a9a)
 
 (format t ";;; File exists check~%")
 
-(ok (and (uiop:file-exists-p (merge-pathnames "mnist.scale" *dataset-dir*))
-         (uiop:file-exists-p (merge-pathnames "mnist.scale.t" *dataset-dir*))
-         (uiop:file-exists-p (merge-pathnames "letter.scale" *dataset-dir*))
+(ok (and (uiop:file-exists-p (merge-pathnames "letter.scale" *dataset-dir*))
          (uiop:file-exists-p (merge-pathnames "letter.scale.t" *dataset-dir*))
          (uiop:file-exists-p (merge-pathnames "a9a" *dataset-dir*))
          (uiop:file-exists-p (merge-pathnames "a9a.t" *dataset-dir*))))
@@ -173,39 +130,39 @@
    (let ((a9a-dtree (make-dtree 2 a9a-dim a9a-datamatrix a9a-target :max-depth 20)))
      (test-dtree a9a-dtree a9a-datamatrix-test a9a-target-test)))
  82.23217010498047d0
- :test (lambda (x y) (approximately-equal x y 0.1d0)))
+ :test #'approximately-equal)
 
 (format t ";; A9A: Make a random forest~%")
 (setf lparallel:*kernel* nil)
 
 (is
- (n-times-average 100
+ (n-times-average 20
    (trivial-garbage:gc :full t)
    (let ((a9a-forest
            (make-forest 2 a9a-dim a9a-datamatrix a9a-target
                         :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10)))
      (test-forest a9a-forest a9a-datamatrix-test a9a-target-test)))
- 84.05d0
- :test (lambda (x y) (approximately-equal x y 0.1d0)))
+ 84.07d0
+ :test #'approximately-equal)
 
 (format t ";; A9A: Make a random forest (Parallel)~%")
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 
 (is
- (n-times-average 100
+ (n-times-average 20
    (trivial-garbage:gc :full t)
    (let ((a9a-forest
            (make-forest 2 a9a-dim a9a-datamatrix a9a-target
                         :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10)))
      (test-forest a9a-forest a9a-datamatrix-test a9a-target-test)))
- 84.05d0
- :test (lambda (x y) (approximately-equal x y 0.1d0)))
+ 84.07d0
+ :test #'approximately-equal)
 
 (format t ";; A9A: Make a random forest with global refinement~%")
 (setf lparallel:*kernel* nil)
 
 (is
- (n-times-average 100
+ (n-times-average 20
    (trivial-garbage:gc :full t)
    (let* ((a9a-forest
             (make-forest 2 a9a-dim a9a-datamatrix a9a-target
@@ -218,14 +175,14 @@
                                    a9a-refine-test a9a-target-test)
      (test-refine-learner a9a-refine-learner a9a-refine-test a9a-target-test)))
  80.98789
- :test (lambda (x y) (approximately-equal x y 0.1d0)))
+ :test #'approximately-equal)
 
 
 (format t ";; A9A: Make a random forest with global refinement (Parallel)~%")
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 
 (is
- (n-times-average 100
+ (n-times-average 20
    (trivial-garbage:gc :full t)
    (let* ((a9a-forest
             (make-forest 2 a9a-dim a9a-datamatrix a9a-target
@@ -238,7 +195,7 @@
                                    a9a-refine-test a9a-target-test)
      (test-refine-learner a9a-refine-learner a9a-refine-test a9a-target-test)))
  80.98789
- :test (lambda (x y) (approximately-equal x y 0.1d0)))
+ :test #'approximately-equal)
 
 ;;; Multiclass classification
 (format t ";;; Multiclass classification~%")
@@ -278,39 +235,39 @@
    (let ((letter-dtree (make-dtree letter-n-class letter-dim letter-datamatrix letter-target :max-depth 20)))
      (test-dtree letter-dtree letter-datamatrix-test letter-target-test)))
  83.9534912109375d0
- :test (lambda (x y) (approximately-equal x y 0.1d0)))
+ :test #'approximately-equal)
 
 (format t ";; LETTER: Make a random forest~%")
 (setf lparallel:*kernel* nil)
 
 (is
- (n-times-average 100
+ (n-times-average 20
    (trivial-garbage:gc :full t)
    (let ((letter-forest
            (make-forest letter-n-class letter-dim letter-datamatrix letter-target
                         :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10)))
      (test-forest letter-forest letter-datamatrix-test letter-target-test)))
  89.05402374267578d0
- :test (lambda (x y) (approximately-equal x y 0.1d0)))
+ :test #'approximately-equal)
 
 (format t ";; LETTER: Make a random forest (Parallel)~%")
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 
 (is
- (n-times-average 100
+ (n-times-average 20
    (trivial-garbage:gc :full t)
    (let ((letter-forest
            (make-forest letter-n-class letter-dim letter-datamatrix letter-target
                         :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10)))
      (test-forest letter-forest letter-datamatrix-test letter-target-test)))
  89.05402374267578d0
- :test (lambda (x y) (approximately-equal x y 0.1d0)))
+ :test #'approximately-equal)
 
 (format t ";; LETTER: Make a random forest with global refinement~%")
 (setf lparallel:*kernel* nil)
 
 (is
- (n-times-average 100
+ (n-times-average 20
    (trivial-garbage:gc :full t)
    (let* ((letter-forest
             (make-forest letter-n-class letter-dim letter-datamatrix letter-target
@@ -323,13 +280,13 @@
                                    letter-refine-test letter-target-test)
      (test-refine-learner letter-refine-learner letter-refine-test letter-target-test)))
  97.06802368164063d0
- :test (lambda (x y) (approximately-equal x y 0.1d0)))
+ :test #'approximately-equal)
 
 (format t ";; LETTER: Make a random forest with global refinement (Parallel)~%")
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 
 (is
- (n-times-average 100
+ (n-times-average 20
    (trivial-garbage:gc :full t)
    (let* ((letter-forest
             (make-forest letter-n-class letter-dim letter-datamatrix letter-target
@@ -342,6 +299,6 @@
                                    letter-refine-test letter-target-test)
      (test-refine-learner letter-refine-learner letter-refine-test letter-target-test)))
  97.06802368164063d0
- :test (lambda (x y) (approximately-equal x y 0.1d0)))
+ :test #'approximately-equal)
 
 (finalize)
