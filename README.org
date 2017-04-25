@@ -1,5 +1,8 @@
 * cl-random-forest
 
+[[http://quickdocs.org/cl-random-forest/][http://quickdocs.org/badge/cl-random-forest.svg]]
+[[https://travis-ci.org/masatoi/cl-random-forest][https://travis-ci.org/masatoi/cl-random-forest.svg?branch=master]]
+
 A implementation of Random Forest with pure Common Lisp. It also includes a implementation of Global Refinement of Random Forest (Ren, Cao, Wei and Sun. "Global Refinement of Random Forest" CVPR2015).
 
 ** Installation
