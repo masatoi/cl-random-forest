@@ -245,33 +245,31 @@
 (ql:quickload :clgplot)
 
 (defun make-predict-matrix (n x0 xn y0 yn forest datamatrix target)
-  (let ((mesh (make-array (list (* n n) 2) :element-type 'double-float))
-        (x-span (/ (- xn x0) (1- n)))
-        (y-span (/ (- yn y0) (1- n))))
+  (let ((x-span (/ (- xn x0) (1- n)))
+        (y-span (/ (- yn y0) (1- n)))
+        (mesh-predicted (make-array (list n n)))
+        (tmp-datamatrix (make-array '(1 2) :element-type 'double-float)))
+    ;; mark prediction
     (loop for i from 0 to (1- n)
           for x from x0 by x-span do
             (loop for j from 0 to (1- n)
                   for y from y0 by y-span do
-                    (setf (aref mesh (+ (* i n) j) 0) x
-                          (aref mesh (+ (* i n) j) 1) y)))
-    (let ((mesh-predicted (make-array (list n n))))
-      ;; mark prediction
-      (loop for i from 0 to (1- n) do
-        (loop for j from 0 to (1- n) do
-          (setf (aref mesh-predicted i j)
-                (if (> (predict-forest forest mesh (+ (* i n) j)) 0)
-                    0.25 -0.25))))
-      ;; mark datapoints
-      (let* ((range (clgp:seq 0 (1- n)))
-             (x-grid (mapcar (lambda (x) (+ (* x x-span) x0)) range))
-             (y-grid (mapcar (lambda (y) (+ (* y y-span) y0)) range)))
-        (loop for i from 0 to (1- (length target)) do
-          (let ((data-i (position-if (lambda (x) (<= (aref datamatrix i 0) x)) x-grid))
-                (data-j (position-if (lambda (y) (<= (aref datamatrix i 1) y)) y-grid)))
-            (if (and data-i data-j)
-                (setf (aref mesh-predicted data-i data-j)
-                      (if (> (aref target i) 0) 1 -1))))))
-      mesh-predicted)))
+                    (setf (aref tmp-datamatrix 0 0) x
+                          (aref tmp-datamatrix 0 1) y)
+                    (setf (aref mesh-predicted i j)
+                          (if (> (predict-forest forest tmp-datamatrix 0) 0)
+                              0.25 -0.25))))
+    ;; mark datapoints
+    (let* ((range (clgp:seq 0 (1- n)))
+           (x-grid (mapcar (lambda (x) (+ (* x x-span) x0)) range))
+           (y-grid (mapcar (lambda (y) (+ (* y y-span) y0)) range)))
+      (loop for i from 0 to (1- (length target)) do
+        (let ((data-i (position-if (lambda (x) (<= (aref datamatrix i 0) x)) x-grid))
+              (data-j (position-if (lambda (y) (<= (aref datamatrix i 1) y)) y-grid)))
+          (if (and data-i data-j)
+              (setf (aref mesh-predicted data-i data-j)
+                    (if (> (aref target i) 0) 1 -1))))))
+    mesh-predicted))
 
 (defparameter predict-matrix
   (make-predict-matrix 100 -3.5d0 3.5d0 -3.5d0 3.5d0 *forest* *datamatrix* *target*))
@@ -288,33 +286,31 @@
 ;;; plot decision boundary (refine)
 
 (defun make-refine-predict-matrix (n x0 xn y0 yn forest forest-learner datamatrix target)
-  (let ((mesh (make-array (list (* n n) 2) :element-type 'double-float))
-        (x-span (/ (- xn x0) (1- n)))
-        (y-span (/ (- yn y0) (1- n))))
+  (let ((x-span (/ (- xn x0) (1- n)))
+        (y-span (/ (- yn y0) (1- n)))
+        (mesh-predicted (make-array (list n n)))
+        (tmp-datamatrix (make-array '(1 2) :element-type 'double-float)))
+    ;; mark prediction
     (loop for i from 0 to (1- n)
           for x from x0 by x-span do
             (loop for j from 0 to (1- n)
                   for y from y0 by y-span do
-                    (setf (aref mesh (+ (* i n) j) 0) x
-                          (aref mesh (+ (* i n) j) 1) y)))
-    (let ((mesh-predicted (make-array (list n n))))
-      ;; mark prediction
-      (loop for i from 0 to (1- n) do
-        (loop for j from 0 to (1- n) do
-          (setf (aref mesh-predicted i j)
-                (if (> (predict-refine-learner forest forest-learner mesh (+ (* i n) j)) 0)
-                    0.25 -0.25))))
-      ;; mark datapoints
-      (let* ((range (clgp:seq 0 (1- n)))
-             (x-grid (mapcar (lambda (x) (+ (* x x-span) x0)) range))
-             (y-grid (mapcar (lambda (y) (+ (* y y-span) y0)) range)))
-        (loop for i from 0 to (1- (length target)) do
-          (let ((data-i (position-if (lambda (x) (<= (aref datamatrix i 0) x)) x-grid))
-                (data-j (position-if (lambda (y) (<= (aref datamatrix i 1) y)) y-grid)))
-            (if (and data-i data-j)
-                (setf (aref mesh-predicted data-i data-j)
-                      (if (> (aref target i) 0) 1 -1))))))
-      mesh-predicted)))
+                    (setf (aref tmp-datamatrix 0 0) x
+                          (aref tmp-datamatrix 0 1) y)
+                    (setf (aref mesh-predicted i j)
+                          (if (> (predict-refine-learner forest forest-learner tmp-datamatrix 0) 0)
+                              0.25 -0.25))))
+    ;; mark datapoints
+    (let* ((range (clgp:seq 0 (1- n)))
+           (x-grid (mapcar (lambda (x) (+ (* x x-span) x0)) range))
+           (y-grid (mapcar (lambda (y) (+ (* y y-span) y0)) range)))
+      (loop for i from 0 to (1- (length target)) do
+        (let ((data-i (position-if (lambda (x) (<= (aref datamatrix i 0) x)) x-grid))
+              (data-j (position-if (lambda (y) (<= (aref datamatrix i 1) y)) y-grid)))
+          (if (and data-i data-j)
+              (setf (aref mesh-predicted data-i data-j)
+                    (if (> (aref target i) 0) 1 -1))))))
+    mesh-predicted))
 
 (defparameter refine-predict-matrix
   (make-refine-predict-matrix 100 -3.5d0 3.5d0 -3.5d0 3.5d0
