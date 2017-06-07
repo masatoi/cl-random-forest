@@ -10,10 +10,10 @@ A implementation of Random Forest with pure Common Lisp. It also includes a impl
 - Faster and more accurate than other major implementations such as scikit-learn (Python/Cython) or ranger (R/C++)
 
 |         | scikit-learn     | ranger           | cl-random-forest |
-| MNIST   | 96.95%, 41.72sec | 97.17%, 69.34sec | 98.29%, 12.68sec |
-| letter  | 96.38%, 2.569sec | 96.42%, 1.828sec | 97.32%, 3.497sec |
-| covtype | 94.89%, 263.7sec | 83.95%, 139.0sec | 96.01%, 103.9sec |
-| usps    | 93,47%, 3.583sec | 93.57%, 11.70sec | 94.96%, 0.686sec |
+| MNIST   | 96.95%, 41.72sec | 97.17%, 69.34sec | *98.29%*, *12.68sec* |
+| letter  | 96.38%, 2.569sec | 96.42%, *1.828sec* | *97.32%*, 3.497sec |
+| covtype | 94.89%, 263.7sec | 83.95%, 139.0sec | *96.01%*, *103.9sec* |
+| usps    | 93,47%, 3.583sec | 93.57%, 11.70sec | *94.96%*, *0.686sec* |
 
 - Supporting parallelization of training and prediction (SBCL Only)
 
