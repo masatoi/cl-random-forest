@@ -36,7 +36,7 @@
 ;; 6.199 seconds (1 core), 2.012 seconds (4 core)
 (defparameter mnist-forest
   (make-forest mnist-n-class mnist-dim mnist-datamatrix mnist-target
-               :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5))
+               :n-tree 800 :bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5))
 
 ;; 5.223 seconds, Accuracy: 93.38%
 (test-forest mnist-forest mnist-datamatrix-test mnist-target-test)
@@ -44,11 +44,11 @@
 ;; 42.717 seconds (1 core), 13.24 seconds (4 core)
 (defparameter mnist-forest-tall
   (make-forest mnist-n-class mnist-dim mnist-datamatrix mnist-target
-               :n-tree 100 :bagging-ratio 1.0 :max-depth 15 :n-trial 27 :min-region-samples 5))
+               :n-tree 100 :bagging-ratio 1.0 :max-depth 15 :n-trial 28 :min-region-samples 5))
 
 (defparameter mnist-forest-tall
   (make-forest mnist-n-class mnist-dim mnist-datamatrix mnist-target
-               :n-tree 100 :bagging-ratio 1.0 :max-depth 15 :n-trial 27 :min-region-samples 5))
+               :n-tree 100 :bagging-ratio 1.0 :max-depth 15 :n-trial 28 :min-region-samples 5))
 
 ;; 14.2 seconds, Accuracy: 96.62%
 (test-forest mnist-forest-tall mnist-datamatrix-test mnist-target-test)
@@ -113,3 +113,8 @@
   (format t "Pruning. leaf-size: ~A" (length (collect-leaf-parent mnist-forest)))
   (pruning! mnist-forest mnist-refine-learner 0.5)
   (format t " -> ~A ~%" (length (collect-leaf-parent mnist-forest))))
+
+;;; cross-validation
+(cross-validation-forest-with-refine-learner
+ 5 mnist-n-class mnist-dim mnist-datamatrix mnist-target
+ :n-tree 100 :bagging-ratio 0.1 :max-depth 10 :n-trial 28 :gamma 10d0 :min-region-samples 5)

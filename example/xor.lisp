@@ -317,3 +317,56 @@
                               *forest* *forest-learner* *datamatrix* *target*))
 
 (clgp:splot-matrix refine-predict-matrix)
+
+
+;;; AROW
+
+(defparameter arow-dataset
+  (loop for i from 0 to (1- (length *target*))
+        collect (cons (coerce (aref *target* i) 'double-float)
+                      (make-array 2 :element-type 'double-float
+                                  :initial-contents (list (aref *datamatrix* i 0)
+                                                          (aref *datamatrix* i 1))))))
+
+(defparameter arow-learner (clol:make-arow 2 10d0))
+(clol:train arow-learner arow-dataset)
+(clol:test arow-learner arow-dataset)
+
+(defun make-arow-predict-matrix (n x0 xn y0 yn learner datamatrix target)
+  (let ((mesh (make-array (list (* n n) 2) :element-type 'double-float))
+        (x-span (/ (- xn x0) (1- n)))
+        (y-span (/ (- yn y0) (1- n))))
+    (loop for i from 0 to (1- n)
+          for x from x0 by x-span do
+            (loop for j from 0 to (1- n)
+                  for y from y0 by y-span do
+                    (setf (aref mesh (+ (* i n) j) 0) x
+                          (aref mesh (+ (* i n) j) 1) y)))
+    (let ((mesh-predicted (make-array (list n n))))
+      ;; mark prediction
+      (loop for i from 0 to (1- n) do
+        (loop for j from 0 to (1- n) do
+          (setf (aref mesh-predicted i j)
+                (if (> (clol:arow-predict learner
+                                          (make-array 2 :element-type 'double-float
+                                                      :initial-contents
+                                                      (list (aref mesh (+ (* i n) j) 0)
+                                                            (aref mesh (+ (* i n) j) 1))))
+                       0)
+                    0.25 -0.25))))
+      ;; mark datapoints
+      (let* ((range (clgp:seq 0 (1- n)))
+             (x-grid (mapcar (lambda (x) (+ (* x x-span) x0)) range))
+             (y-grid (mapcar (lambda (y) (+ (* y y-span) y0)) range)))
+        (loop for i from 0 to (1- (length target)) do
+          (let ((data-i (position-if (lambda (x) (<= (aref datamatrix i 0) x)) x-grid))
+                (data-j (position-if (lambda (y) (<= (aref datamatrix i 1) y)) y-grid)))
+            (if (and data-i data-j)
+                (setf (aref mesh-predicted data-i data-j)
+                      (if (> (aref target i) 0) 1 -1))))))
+      mesh-predicted)))
+
+(defparameter arow-predict-matrix
+  (make-arow-predict-matrix 100 -3d0 3d0 -3d0 3d0 arow-learner *datamatrix* *target*))
+
+(clgp:splot-matrix arow-predict-matrix)

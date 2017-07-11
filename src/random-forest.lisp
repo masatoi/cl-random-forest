@@ -8,6 +8,7 @@
            :make-forest :predict-forest :test-forest
            :make-refine-vector :make-refine-learner :predict-refine-learner :make-refine-dataset
            :train-refine-learner :test-refine-learner :train-refine-learner-process
+           :cross-validation-forest-with-refine-learner
            :pruning!))
 
 (in-package :cl-random-forest)
@@ -696,6 +697,51 @@
          (train-refine-learner-process-inner
           ,refine-learner ,train-dataset ,train-target ,test-dataset ,test-target
           :max-epoch ,max-epoch)))
+
+(defun cross-validation-forest-with-refine-learner
+    (n-fold n-class datum-dim datamatrix target
+     &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
+       (n-trial 10) (gain-test #'entropy) (remove-sample-indices? t) (gamma 10d0))
+  (let* ((accuracy-sum 0)
+         (total-size (array-dimension datamatrix 0))
+         (test-size (floor (/ total-size n-fold)))
+         (train-size (- total-size test-size))
+         (test-datamatrix (make-array (list test-size datum-dim)
+                                       :element-type 'double-float :initial-element 0d0))
+         (test-target (make-array test-size :element-type 'fixnum :initial-element 0))
+         (train-datamatrix (make-array (list train-size datum-dim)
+                                       :element-type 'double-float :initial-element 0d0))
+         (train-target (make-array train-size :element-type 'fixnum :initial-element 0)))
+    (loop for n from 0 to (1- n-fold) do      
+      ;; Init train/test datamatrix/target
+      (loop for i from 0 to (1- (* n test-size)) do
+        (setf (aref train-target i) (aref target i))
+        (loop for j from 0 to (1- datum-dim) do
+          (setf (aref train-datamatrix i j) (aref datamatrix i j))))
+      (loop for i from (* n test-size) to (1- (* (1+ n) test-size)) do
+        (setf (aref test-target (- i (* n test-size))) (aref target i))
+        (loop for j from 0 to (1- datum-dim) do
+          (setf (aref test-datamatrix (- i (* n test-size)) j) (aref datamatrix i j))))
+      (loop for i from (* (1+ n) test-size) to (1- total-size) do
+        (setf (aref train-target (- i test-size)) (aref target i))
+        (loop for j from 0 to (1- datum-dim) do
+          (setf (aref train-datamatrix (- i test-size) j) (aref datamatrix i j))))
+      ;; Build a random-forest and make a learner and datasets for Global refinement
+      (let* ((forest (make-forest n-class datum-dim train-datamatrix train-target
+                                  :n-tree n-tree :bagging-ratio bagging-ratio :max-depth max-depth
+                                  :min-region-samples min-region-samples :n-trial n-trial
+                                  :gain-test gain-test :remove-sample-indices? remove-sample-indices?))
+             (refine-learner (make-refine-learner forest gamma))
+             (refine-train-dataset (make-refine-dataset forest train-datamatrix))
+             (refine-test-dataset  (make-refine-dataset forest test-datamatrix)))
+        (train-refine-learner-process refine-learner
+                                      refine-train-dataset train-target
+                                      refine-test-dataset  test-target)
+        (incf accuracy-sum
+              (test-refine-learner refine-learner refine-test-dataset test-target)))
+      ;; cleanup
+      #+sbcl (sb-ext:gc :full t))
+    (format t "Average accuracy: ~f%~%" (/ accuracy-sum n-fold))))
 
 ;;; Global pruning
 

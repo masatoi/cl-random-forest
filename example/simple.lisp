@@ -65,3 +65,7 @@
 (setf *forest-learner* (make-refine-learner *forest*))
 (train-refine-learner *forest-learner* *forest-refine-dataset* *target*)
 (test-refine-learner  *forest-learner* *forest-refine-dataset* *target*)
+
+;; cross-validation
+(defparameter *n-fold* 3)
+(cross-validation-forest-with-refine-learner *n-fold* *n-class* *n-dim* *datamatrix* *target*)
