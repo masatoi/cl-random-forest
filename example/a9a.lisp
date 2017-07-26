@@ -31,12 +31,12 @@
     (defparameter a9a-target-test target)))
 
 ;; dtree
-(defparameter a9a-dtree (make-dtree a9a-n-class a9a-dim a9a-datamatrix a9a-target :max-depth 20))
+(defparameter a9a-dtree (make-dtree a9a-n-class a9a-datamatrix a9a-target :max-depth 20))
 (test-dtree a9a-dtree a9a-datamatrix-test a9a-target-test)
 
 ;; random-forest
 (defparameter a9a-forest
-  (make-forest a9a-n-class a9a-dim a9a-datamatrix a9a-target
+  (make-forest a9a-n-class a9a-datamatrix a9a-target
                :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10))
 (test-forest a9a-forest a9a-datamatrix a9a-target)
 (test-forest a9a-forest a9a-datamatrix-test a9a-target-test)

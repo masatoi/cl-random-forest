@@ -21,19 +21,19 @@
 
 ;; dtree
 (defparameter usps-dtree
-  (make-dtree usps-n-class usps-dim usps-datamatrix usps-target :max-depth 10))
+  (make-dtree usps-n-class usps-datamatrix usps-target :max-depth 10))
 (test-dtree usps-dtree usps-datamatrix-test usps-target-test)
 
 ;; random-forest
 (time 
  (defparameter usps-forest
-   (make-forest usps-n-class usps-dim usps-datamatrix usps-target
+   (make-forest usps-n-class usps-datamatrix usps-target
                 :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 16 :max-depth 15)))
 (test-forest usps-forest usps-datamatrix-test usps-target-test)
 ;; max-depth=5: 73.22% / max-depth=10: 89.03% / max-depth=15: 91.4%
 
 (defparameter usps-forest-tall
-  (make-forest usps-n-class usps-dim usps-datamatrix usps-target
+  (make-forest usps-n-class usps-datamatrix usps-target
                :n-tree 100 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 100))
 (test-forest usps-forest-tall usps-datamatrix-test usps-target-test) ; 93.82%
 

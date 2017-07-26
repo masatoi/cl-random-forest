@@ -236,7 +236,7 @@
   
 ;;; make random forest
 (defparameter *forest*
-  (make-forest *n-class* *n-dim* *datamatrix* *target* :n-tree 100 :bagging-ratio 1.0 :max-depth 100))
+  (make-forest *n-class* *datamatrix* *target* :n-tree 100 :bagging-ratio 1.0 :max-depth 100))
 
 ;;; test random forest
 (test-forest *forest* *datamatrix* *target*)

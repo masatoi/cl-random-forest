@@ -5,7 +5,6 @@
 ;;; Small dataset ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defparameter *n-class* 4)
-(defparameter *n-dim* 2)
 
 (defparameter *target*
   (make-array 11 :element-type 'fixnum
@@ -25,9 +24,11 @@
                                   (2.0d0 2.0d0)
                                   (1.0d0 2.0d0)
                                   (1.0d0 1.0d0))))
+
+;;; Decision tree ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   
 ;; make decision tree
-(defparameter *dtree* (make-dtree *n-class* *n-dim* *datamatrix* *target*))
+(defparameter *dtree* (make-dtree *n-class* *datamatrix* *target*))
 
 ;; test decision tree
 (test-dtree *dtree* *datamatrix* *target*)
@@ -36,12 +37,16 @@
 (traverse #'node-information-gain (dtree-root *dtree*))
 (traverse #'node-sample-indices (dtree-root *dtree*))
 
+;;; Random forest ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 ;; make random forest
 (defparameter *forest*
-  (make-forest *n-class* *n-dim* *datamatrix* *target* :n-tree 10 :bagging-ratio 1.0))
+  (make-forest *n-class* *datamatrix* *target* :n-tree 10 :bagging-ratio 1.0))
 
 ;; test random forest
 (test-forest *forest* *datamatrix* *target*)
+
+;;; Global refinement ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; make refine learner
 (defparameter *forest-learner* (make-refine-learner *forest*))
@@ -55,7 +60,7 @@
 (train-refine-learner *forest-learner* *forest-refine-dataset* *target*)
 (test-refine-learner  *forest-learner* *forest-refine-dataset* *target*)
 
-;; Global pruning
+;;; Global pruning ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Pruning *forest*
 (pruning! *forest* *forest-learner* 0.1)
@@ -68,4 +73,4 @@
 
 ;; cross-validation
 (defparameter *n-fold* 3)
-(cross-validation-forest-with-refine-learner *n-fold* *n-class* *n-dim* *datamatrix* *target*)
+(cross-validation-forest-with-refine-learner *n-fold* *n-class* *datamatrix* *target*)

@@ -22,18 +22,18 @@
 
 ;; dtree
 (defparameter letter-dtree
-  (make-dtree letter-n-class letter-dim letter-datamatrix letter-target :max-depth 10))
+  (make-dtree letter-n-class letter-datamatrix letter-target :max-depth 10))
 (test-dtree letter-dtree letter-datamatrix-test letter-target-test)
 
 ;; random-forest
 (defparameter letter-forest
-  (make-forest letter-n-class letter-dim letter-datamatrix letter-target
+  (make-forest letter-n-class letter-datamatrix letter-target
                :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 15))
 (test-forest letter-forest letter-datamatrix-test letter-target-test)
 ;; max-depth=5: 73.22% / max-depth=10: 89.03% / max-depth=15: 91.4%
 
 (defparameter letter-forest-tall
-  (make-forest letter-n-class letter-dim letter-datamatrix letter-target
+  (make-forest letter-n-class letter-datamatrix letter-target
                :n-tree 100 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 100))
 (test-forest letter-forest-tall letter-datamatrix-test letter-target-test) ; 96.82%
 

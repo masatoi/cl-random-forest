@@ -34,7 +34,7 @@
 ;; Make decision tree
 
 (defparameter mushrooms-dtree
-  (make-dtree mushrooms-n-class mushrooms-dim mushrooms-datamatrix mushrooms-target
+  (make-dtree mushrooms-n-class mushrooms-datamatrix mushrooms-target
               :max-depth 15 :min-region-samples 5 :n-trial 10))
 
 (test-dtree mushrooms-dtree mushrooms-datamatrix mushrooms-target)
@@ -43,14 +43,14 @@
 
 ;; Make forest
 (defparameter mushrooms-forest
-  (make-forest mushrooms-n-class mushrooms-dim mushrooms-datamatrix mushrooms-target
+  (make-forest mushrooms-n-class mushrooms-datamatrix mushrooms-target
                :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10))
 
 (test-forest mushrooms-forest mushrooms-datamatrix mushrooms-target) ; => 99.98
 (test-forest mushrooms-forest mushrooms-datamatrix-test mushrooms-target-test) ; => 96.7
 
 (defparameter mushrooms-forest-tall
-  (make-forest mushrooms-n-class mushrooms-dim mushrooms-datamatrix mushrooms-target
+  (make-forest mushrooms-n-class mushrooms-datamatrix mushrooms-target
                :n-tree 100 :bagging-ratio 1.0 :min-region-samples 1 :n-trial 10 :max-depth 15))
 
 (test-forest mushrooms-forest-tall mushrooms-datamatrix mushrooms-target) ; => 100.0

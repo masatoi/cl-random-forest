@@ -7,7 +7,7 @@
 ;; MNIST data
 ;; https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/multiclass.html#mnist
 
-(defparameter mnist-dim 780)
+(defparameter mnist-dim 784)
 (defparameter mnist-n-class 10)
 
 (let ((mnist-train (clol.utils:read-data "/home/wiz/tmp/mnist.scale" mnist-dim :multiclass-p t))
@@ -33,31 +33,27 @@
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 (setf lparallel:*kernel* nil)
 
-;; 6.199 seconds (1 core), 2.012 seconds (4 core)
+;; 6.079 seconds (1 core), 2.116 seconds (4 core)
 (defparameter mnist-forest
-  (make-forest mnist-n-class mnist-dim mnist-datamatrix mnist-target
-               :n-tree 800 :bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5))
+  (make-forest mnist-n-class mnist-datamatrix mnist-target
+               :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5))
 
-;; 5.223 seconds, Accuracy: 93.38%
+;; 4.786 seconds, Accuracy: 93.38%
 (test-forest mnist-forest mnist-datamatrix-test mnist-target-test)
 
 ;; 42.717 seconds (1 core), 13.24 seconds (4 core)
 (defparameter mnist-forest-tall
-  (make-forest mnist-n-class mnist-dim mnist-datamatrix mnist-target
+  (make-forest mnist-n-class mnist-datamatrix mnist-target
                :n-tree 100 :bagging-ratio 1.0 :max-depth 15 :n-trial 28 :min-region-samples 5))
 
-(defparameter mnist-forest-tall
-  (make-forest mnist-n-class mnist-dim mnist-datamatrix mnist-target
-               :n-tree 100 :bagging-ratio 1.0 :max-depth 15 :n-trial 28 :min-region-samples 5))
-
-;; 14.2 seconds, Accuracy: 96.62%
+;; 2.023 seconds, Accuracy: 96.62%
 (test-forest mnist-forest-tall mnist-datamatrix-test mnist-target-test)
 
 ;;; Global Refinement of Random Forest ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Generate sparse data from Random Forest
 
-;; 6.394 seconds (1 core), 1.811 seconds (4 core)
+;; 6.255 seconds (1 core), 1.809 seconds (4 core)
 (defparameter mnist-refine-dataset
   (make-refine-dataset mnist-forest mnist-datamatrix))
 
@@ -114,7 +110,10 @@
   (pruning! mnist-forest mnist-refine-learner 0.5)
   (format t " -> ~A ~%" (length (collect-leaf-parent mnist-forest))))
 
-;;; cross-validation
+;;; n-fold cross-validation
+
+(defparameter n-fold 5)
+
 (cross-validation-forest-with-refine-learner
- 5 mnist-n-class mnist-dim mnist-datamatrix mnist-target
+ n-fold mnist-n-class mnist-datamatrix mnist-target
  :n-tree 100 :bagging-ratio 0.1 :max-depth 10 :n-trial 28 :gamma 10d0 :min-region-samples 5)

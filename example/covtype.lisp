@@ -27,12 +27,12 @@
 
 ;; dtree
 (defparameter covtype-dtree
-  (make-dtree covtype-n-class covtype-dim covtype-datamatrix covtype-target :max-depth 10))
+  (make-dtree covtype-n-class covtype-datamatrix covtype-target :max-depth 10))
 (test-dtree covtype-dtree covtype-datamatrix-test covtype-target-test)
 
 ;; random-forest
 (defparameter covtype-forest
-  (make-forest covtype-n-class covtype-dim covtype-datamatrix covtype-target
+  (make-forest covtype-n-class covtype-datamatrix covtype-target
                :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 20 :max-depth 15))
 (test-forest covtype-forest covtype-datamatrix-test covtype-target-test)
 ;; max-depth=5,n-tree=100: 2.861 seconds
@@ -41,7 +41,7 @@
 
 (time
  (defparameter covtype-forest-tall
-   (make-forest covtype-n-class covtype-dim covtype-datamatrix covtype-target
+   (make-forest covtype-n-class covtype-datamatrix covtype-target
                 :n-tree 100 :bagging-ratio 1.0 :min-region-samples 5 :n-trial 10 :max-depth 25)))
 
 (time
