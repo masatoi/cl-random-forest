@@ -128,7 +128,7 @@
 (is
  (n-times-average
   100
-  (let ((a9a-dtree (make-dtree 2 a9a-dim a9a-datamatrix a9a-target :max-depth 20)))
+  (let ((a9a-dtree (make-dtree 2 a9a-datamatrix a9a-target :max-depth 20)))
     (test-dtree a9a-dtree a9a-datamatrix-test a9a-target-test)))
  82.23217010498047d0
  :test #'approximately-equal)
@@ -141,7 +141,7 @@
   20
   (trivial-garbage:gc :full t)
   (let ((a9a-forest
-          (make-forest 2 a9a-dim a9a-datamatrix a9a-target
+          (make-forest 2 a9a-datamatrix a9a-target
                        :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10)))
     (test-forest a9a-forest a9a-datamatrix-test a9a-target-test)))
  84.07d0
@@ -157,7 +157,7 @@
     20
     (trivial-garbage:gc :full t)
     (let ((a9a-forest
-            (make-forest 2 a9a-dim a9a-datamatrix a9a-target
+            (make-forest 2 a9a-datamatrix a9a-target
                          :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10)))
       (test-forest a9a-forest a9a-datamatrix-test a9a-target-test)))
    84.07d0
@@ -171,7 +171,7 @@
   20
   (trivial-garbage:gc :full t)
   (let* ((a9a-forest
-           (make-forest 2 a9a-dim a9a-datamatrix a9a-target
+           (make-forest 2 a9a-datamatrix a9a-target
                         :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10))
          (a9a-refine-dataset (make-refine-dataset a9a-forest a9a-datamatrix))
          (a9a-refine-test (make-refine-dataset a9a-forest a9a-datamatrix-test))
@@ -194,7 +194,7 @@
     20
     (trivial-garbage:gc :full t)
     (let* ((a9a-forest
-             (make-forest 2 a9a-dim a9a-datamatrix a9a-target
+             (make-forest 2 a9a-datamatrix a9a-target
                           :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10))
            (a9a-refine-dataset (make-refine-dataset a9a-forest a9a-datamatrix))
            (a9a-refine-test (make-refine-dataset a9a-forest a9a-datamatrix-test))
@@ -242,7 +242,7 @@
 (is
  (n-times-average
   100
-  (let ((letter-dtree (make-dtree letter-n-class letter-dim letter-datamatrix letter-target :max-depth 20)))
+  (let ((letter-dtree (make-dtree letter-n-class letter-datamatrix letter-target :max-depth 20)))
     (test-dtree letter-dtree letter-datamatrix-test letter-target-test)))
  83.9534912109375d0
  :test #'approximately-equal)
@@ -255,7 +255,7 @@
   20
   (trivial-garbage:gc :full t)
   (let ((letter-forest
-          (make-forest letter-n-class letter-dim letter-datamatrix letter-target
+          (make-forest letter-n-class letter-datamatrix letter-target
                        :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10)))
     (test-forest letter-forest letter-datamatrix-test letter-target-test)))
  89.05402374267578d0
@@ -271,7 +271,7 @@
     20
     (trivial-garbage:gc :full t)
     (let ((letter-forest
-            (make-forest letter-n-class letter-dim letter-datamatrix letter-target
+            (make-forest letter-n-class letter-datamatrix letter-target
                          :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10)))
       (test-forest letter-forest letter-datamatrix-test letter-target-test)))
    89.05402374267578d0
@@ -285,7 +285,7 @@
   20
   (trivial-garbage:gc :full t)
   (let* ((letter-forest
-           (make-forest letter-n-class letter-dim letter-datamatrix letter-target
+           (make-forest letter-n-class letter-datamatrix letter-target
                         :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10))
          (letter-refine-dataset (make-refine-dataset letter-forest letter-datamatrix))
          (letter-refine-test (make-refine-dataset letter-forest letter-datamatrix-test))
@@ -307,7 +307,7 @@
     20
     (trivial-garbage:gc :full t)
     (let* ((letter-forest
-             (make-forest letter-n-class letter-dim letter-datamatrix letter-target
+             (make-forest letter-n-class letter-datamatrix letter-target
                           :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5 :n-trial 10 :max-depth 10))
            (letter-refine-dataset (make-refine-dataset letter-forest letter-datamatrix))
            (letter-refine-test (make-refine-dataset letter-forest letter-datamatrix-test))
