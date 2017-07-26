@@ -17,19 +17,26 @@
 
 (defstruct (dtree (:constructor %make-dtree)
                   (:print-object %print-dtree))
-  n-class class-count-array datum-dim datamatrix target
+  n-class class-count-array ; for classification
+  target-dim ; for regression
+  datum-dim datamatrix target
   root max-depth min-region-samples n-trial gain-test remove-sample-indices?
   tmp-arr1 tmp-index1 tmp-arr2 tmp-index2
   best-arr1 best-index1 best-arr2 best-index2
   max-leaf-index id)
 
 (defun %print-dtree (obj stream)
-  (format stream "#S(DTREE :N-CLASS ~A :DATUM-DIM ~A :ROOT ~A)"
-          (dtree-n-class obj)
-          (dtree-datum-dim obj)
-          (dtree-root obj)))
+  (if (dtree-n-class obj)
+      (format stream "#S(DTREE :N-CLASS ~A :DATUM-DIM ~A :ROOT ~A)"
+              (dtree-n-class obj)
+              (dtree-datum-dim obj)
+              (dtree-root obj))
+      (format stream "#S(RTREE :DATUM-DIM ~A :TARGET-DIM ~A :ROOT ~A)"
+              (rtree-datum-dim obj)
+              (rtree-target-dim obj)
+              (rtree-root obj))))
 
-(defun make-dtree (n-class datum-dim datamatrix target
+(defun make-dtree (n-class datamatrix target
                    &key (max-depth 5) (min-region-samples 1) (n-trial 10)
                      (gain-test #'entropy) (remove-sample-indices? t) sample-indices)
   (let* ((len (if sample-indices
@@ -38,7 +45,7 @@
          (dtree (%make-dtree
                  :n-class n-class
                  :class-count-array (make-array n-class :element-type 'double-float)
-                 :datum-dim datum-dim
+                 :datum-dim (array-dimension datamatrix 1)
                  :datamatrix datamatrix
                  :target target
                  :max-depth max-depth :min-region-samples min-region-samples
@@ -56,6 +63,39 @@
     (setf (dtree-root dtree) (make-root-node dtree :sample-indices sample-indices))
     (split-node! (dtree-root dtree))
     dtree))
+
+(defun make-rtree (datamatrix target
+                   &key (max-depth 5) (min-region-samples 1) (n-trial 10)
+                     (gain-test #'variance) (remove-sample-indices? t) sample-indices)
+  (let* ((len (if sample-indices
+                  (length sample-indices)
+                  (array-dimension datamatrix 0)))
+         (rtree (%make-dtree
+                 :datum-dim (array-dimension datamatrix 1)
+                 :target-dim (array-dimension target 1)
+                 :datamatrix datamatrix
+                 :target target
+                 :max-depth max-depth :min-region-samples min-region-samples
+                 :n-trial n-trial
+                 :gain-test gain-test
+                 :remove-sample-indices? remove-sample-indices?
+                 :tmp-arr1 (make-array len :element-type 'fixnum :initial-element 0)
+                 :tmp-index1 0
+                 :tmp-arr2 (make-array len :element-type 'fixnum :initial-element 0)
+                 :tmp-index2 0
+                 :best-arr1 (make-array len :element-type 'fixnum :initial-element 0)
+                 :best-index1 0
+                 :best-arr2 (make-array len :element-type 'fixnum :initial-element 0)
+                 :best-index2 0)))
+    (setf (dtree-root rtree) (make-root-node rtree :sample-indices sample-indices))
+    (split-node! (dtree-root rtree))
+    rtree))
+
+(defun dtree? (tree)
+  (dtree-n-class tree))
+
+(defun rtree? (tree)
+  (dtree-target-dim tree))
 
 (defstruct (node (:constructor %make-node)
                  (:print-object %print-node))
@@ -153,6 +193,38 @@
                          0d0
                          (* pk (log pk)))))))
     (* -1d0 sum)))
+
+(defmacro square (x)
+  `(* ,x ,x))
+
+(defun variance (sample-indices terminate-index rtree)
+  (declare (optimize (speed 3) (safety 0))
+           (type (simple-array fixnum) sample-indices)
+           (type fixnum terminate-index)
+           (type dtree rtree))
+  (if (zerop terminate-index)
+      0d0
+      (let ((len (* terminate-index 1.0d0))
+            (target (dtree-target rtree))
+            (total-sum-of-squares 0d0))
+        (declare (type (simple-array double-float) target)
+                 (type double-float total-sum-of-squares len))
+        (loop for j fixnum from 0 below (dtree-target-dim rtree) do
+          (let ((sum 0d0))
+            (declare (type double-float sum))
+            (let ((ave (progn
+                         (loop for i fixnum from 0 below terminate-index do
+                           (incf sum (aref target (aref sample-indices i) j)))
+                         (/ sum len))))
+              (declare (type double-float ave))
+              (let ((sum-of-squares 0d0))
+                (declare (type double-float sum-of-squares))
+                (loop for i fixnum from 0 to (1- terminate-index) do
+                  (incf sum-of-squares
+                        (square (- (aref target (aref sample-indices i) j)
+                                   ave))))
+                (incf total-sum-of-squares sum-of-squares)))))
+        total-sum-of-squares)))
 
 (defun region-min/max (sample-indices datamatrix attribute)
   (declare (optimize (speed 3) (safety 0))
@@ -273,8 +345,11 @@
                  (right-gain (funcall gain-test (dtree-tmp-arr2 dtree) right-len dtree))
                  (parent-size (length (node-sample-indices node)))
                  (children-gain
-                   (+ (* -1d0 (/ left-len parent-size) left-gain)
-                      (* -1d0 (/ right-len parent-size) right-gain))))
+                   (cond ((dtree? dtree) ; classification
+                          (+ (* -1d0 (/ left-len parent-size)  left-gain)
+                             (* -1d0 (/ right-len parent-size) right-gain)))
+                         ((rtree? dtree) ; regression
+                          (+ (* -1d0 left-gain) (* -1d0 right-gain))))))
             (when (< max-children-gain children-gain)
               (copy-tmp->best! dtree)
               (setf max-children-gain children-gain
@@ -338,6 +413,8 @@
                  (find-leaf (node-left-node node) datamatrix datum-index)
                  (find-leaf (node-right-node node) datamatrix datum-index))))))
 
+;; decision-tree prediction
+
 (defun predict-dtree (dtree datamatrix datum-index)
   (let ((max 0d0)
         (max-class 0)
@@ -368,18 +445,64 @@
         (incf n-correct)))
     (calc-accuracy n-correct len :quiet-p quiet-p)))
 
+;; regression-tree prediction
+
+(defun node-regression-mean (node)
+  (let* ((rtree (node-dtree node))
+         (target (dtree-target rtree))
+         (pred-arr (make-array (dtree-target-dim rtree)
+                               :element-type 'double-float :initial-element 0d0))
+         (sample-indices (node-sample-indices node))
+         (len (length sample-indices)))
+    (if (zerop len)
+        pred-arr
+        (progn
+          (loop for i across sample-indices do
+            (loop for j from 0 below (dtree-target-dim rtree) do
+              (incf (aref pred-arr j) (aref target i j))))
+          (loop for j from 0 below (dtree-target-dim rtree) do
+            (setf (aref pred-arr j) (/ (aref pred-arr j) len)))
+          pred-arr))))
+    
+(defun predict-rtree (rtree datamatrix datum-index)
+  (node-regression-mean (find-leaf (dtree-root rtree) datamatrix datum-index)))
+
+(defun test-rtree (rtree datamatrix target &key quiet-p)
+  (let ((sum-square-error-arr
+          (make-array (dtree-target-dim rtree) :element-type 'double-float :initial-element 0d0)))
+    (loop for i fixnum from 0 below (array-dimension datamatrix 0) do
+      (let ((predict-arr (predict-rtree rtree datamatrix i)))
+        (loop for j fixnum from 0 below (dtree-target-dim rtree) do
+          (incf (aref sum-square-error-arr j)
+                (square (- (aref predict-arr j) (aref target i j)))))))
+    (loop for j fixnum from 0 below (dtree-target-dim rtree) do
+      (setf (aref sum-square-error-arr j)
+            (sqrt (/ (aref sum-square-error-arr j)
+                     (array-dimension datamatrix 0)))))
+    (let ((total-rmse (loop for rmse across sum-square-error-arr summing rmse)))
+      (when (null quiet-p)
+        (format t "RMSE: ~A~%" total-rmse))
+      total-rmse)))
+
 ;;; forest
 
 (defstruct (forest (:constructor %make-forest)
                    (:print-object %print-forest))
   n-tree bagging-ratio datamatrix target dtree-list
-  n-class class-count-array datum-dim max-depth min-region-samples n-trial gain-test
-  ;; for global refinement
-  index-offset)
+  n-class class-count-array ; for classification
+  target-dim ; for regression
+  datum-dim max-depth min-region-samples n-trial gain-test
+  index-offset ; for global refinement
+  )
 
 (defun %print-forest (obj stream)
-  (format stream "#S(FOREST :N-TREE ~A)"
-          (forest-n-tree obj)))
+  (if (forest-n-class obj)
+      (format stream "#S(FOREST :N-CLASS ~A :N-TREE ~A)"
+              (forest-n-class obj)
+              (forest-n-tree obj))
+      (format stream "#S(REGRESSION-FOREST :TARGET-DIM ~A :N-TREE ~A)"
+              (forest-target-dim obj)
+              (forest-n-tree obj))))
 
 (defun bootstrap-sample-indices (n datamatrix)
   (let ((len (array-dimension datamatrix 0))
@@ -388,7 +511,7 @@
       (setf (aref arr i) (random len)))
     arr))
 
-(defun make-forest (n-class datum-dim datamatrix target
+(defun make-forest (n-class datamatrix target
                     &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
                       (n-trial 10) (gain-test #'entropy) (remove-sample-indices? t))
   (let ((forest (%make-forest
@@ -398,7 +521,7 @@
                  :target target
                  :n-class n-class
                  :class-count-array (make-array n-class :element-type 'double-float)
-                 :datum-dim datum-dim
+                 :datum-dim (array-dimension datamatrix 1)
                  :max-depth max-depth
                  :min-region-samples min-region-samples
                  :n-trial n-trial
@@ -406,7 +529,41 @@
                  :index-offset (make-array n-tree :element-type 'fixnum :initial-element 0))))
     ;; make dtree list
     (push-ntimes n-tree (forest-dtree-list forest)
-      (make-dtree n-class datum-dim datamatrix target
+      (make-dtree n-class datamatrix target
+                  :max-depth max-depth
+                  :min-region-samples min-region-samples
+                  :n-trial n-trial
+                  :gain-test gain-test
+                  :remove-sample-indices? remove-sample-indices?
+                  :sample-indices (bootstrap-sample-indices
+                                   (floor (* (array-dimension datamatrix 0) bagging-ratio))
+                                   datamatrix)))
+    ;; set dtree-id
+    (loop for dtree in (forest-dtree-list forest)
+          for i from 0
+          do (setf (dtree-id dtree) i))
+    ;; set leaf-id
+    (set-leaf-index-forest! forest)
+    forest))
+
+(defun make-regression-forest (datamatrix target
+                    &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
+                      (n-trial 10) (gain-test #'variance) (remove-sample-indices? t))
+  (let ((forest (%make-forest
+                 :n-tree n-tree
+                 :bagging-ratio bagging-ratio
+                 :datamatrix datamatrix
+                 :target target
+                 :datum-dim (array-dimension datamatrix 1)
+                 :target-dim (array-dimension target 1)
+                 :max-depth max-depth
+                 :min-region-samples min-region-samples
+                 :n-trial n-trial
+                 :gain-test gain-test
+                 :index-offset (make-array n-tree :element-type 'fixnum :initial-element 0))))
+    ;; make dtree list
+    (push-ntimes n-tree (forest-dtree-list forest)
+      (make-rtree datamatrix target
                   :max-depth max-depth
                   :min-region-samples min-region-samples
                   :n-trial n-trial
@@ -469,6 +626,36 @@
                (aref target i))
         (incf n-correct)))
     (calc-accuracy n-correct len :quiet-p quiet-p)))
+
+;; predict regression forest
+
+(defun predict-regression-forest (forest datamatrix datum-index)
+  (let ((pred-arr-total (make-array (forest-target-dim forest)
+                                    :element-type 'double-float :initial-element 0d0)))
+    (dolist (rtree (forest-dtree-list forest))
+      (let ((pred-arr (predict-rtree rtree datamatrix datum-index)))
+        (loop for i from 0 below (forest-target-dim forest) do
+          (incf (aref pred-arr-total i) (aref pred-arr i)))))
+    (loop for i from 0 below (forest-target-dim forest) do
+      (setf (aref pred-arr-total i) (/ (aref pred-arr-total i) (forest-n-tree forest))))
+    pred-arr-total))
+
+(defun test-regression-forest (forest datamatrix target &key quiet-p)
+  (let ((sum-square-error-arr
+          (make-array (forest-target-dim forest) :element-type 'double-float :initial-element 0d0)))
+    (loop for i fixnum from 0 below (array-dimension datamatrix 0) do
+      (let ((predict-arr (predict-regression-forest forest datamatrix i)))
+        (loop for j fixnum from 0 below (forest-target-dim forest) do
+          (incf (aref sum-square-error-arr j)
+                (square (- (aref predict-arr j) (aref target i j)))))))
+    (loop for j fixnum from 0 below (forest-target-dim forest) do
+      (setf (aref sum-square-error-arr j)
+            (sqrt (/ (aref sum-square-error-arr j)
+                     (array-dimension datamatrix 0)))))
+    (let ((total-rmse (loop for rmse across sum-square-error-arr summing rmse)))
+      (when (null quiet-p)
+        (format t "RMSE: ~A~%" total-rmse))
+      total-rmse)))
 
 ;;; Global refinement
 
@@ -699,10 +886,11 @@
           :max-epoch ,max-epoch)))
 
 (defun cross-validation-forest-with-refine-learner
-    (n-fold n-class datum-dim datamatrix target
+    (n-fold n-class datamatrix target
      &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
        (n-trial 10) (gain-test #'entropy) (remove-sample-indices? t) (gamma 10d0))
-  (let* ((accuracy-sum 0)
+  (let* ((datum-dim (array-dimension datamatrix 1))
+         (accuracy-sum 0)
          (total-size (array-dimension datamatrix 0))
          (test-size (floor (/ total-size n-fold)))
          (train-size (- total-size test-size))
@@ -727,7 +915,7 @@
         (loop for j from 0 to (1- datum-dim) do
           (setf (aref train-datamatrix (- i test-size) j) (aref datamatrix i j))))
       ;; Build a random-forest and make a learner and datasets for Global refinement
-      (let* ((forest (make-forest n-class datum-dim train-datamatrix train-target
+      (let* ((forest (make-forest n-class train-datamatrix train-target
                                   :n-tree n-tree :bagging-ratio bagging-ratio :max-depth max-depth
                                   :min-region-samples min-region-samples :n-trial n-trial
                                   :gain-test gain-test :remove-sample-indices? remove-sample-indices?))
@@ -744,9 +932,6 @@
     (format t "Average accuracy: ~f%~%" (/ accuracy-sum n-fold))))
 
 ;;; Global pruning
-
-(defmacro square (x)
-  `(* ,x ,x))
 
 (defun make-l2-norm-multiclass (learner)
   (let* ((dim (clol::one-vs-rest-input-dimension learner))
