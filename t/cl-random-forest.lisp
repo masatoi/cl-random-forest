@@ -59,7 +59,7 @@
              "https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary/a9a.t"
              "-O" (format-pathname file.t))))))
 
-(defun approximately-equal (x y &optional (delta 0.2d0))
+(defun approximately-equal (x y &optional (delta 1d0))
   (flet ((andf (x y) (and x y))
          (close? (x y) (< (abs (- x y)) delta)))
     (etypecase x
@@ -127,7 +127,7 @@
 
 (is
  (n-times-average
-  100
+  10
   (let ((a9a-dtree (make-dtree 2 a9a-datamatrix a9a-target :max-depth 20)))
     (test-dtree a9a-dtree a9a-datamatrix-test a9a-target-test)))
  82.23217010498047d0
@@ -138,7 +138,7 @@
 
 (is
  (n-times-average
-  20
+  5
   (trivial-garbage:gc :full t)
   (let ((a9a-forest
           (make-forest 2 a9a-datamatrix a9a-target
@@ -154,7 +154,7 @@
 
   (is
    (n-times-average
-    20
+    5
     (trivial-garbage:gc :full t)
     (let ((a9a-forest
             (make-forest 2 a9a-datamatrix a9a-target
@@ -168,7 +168,7 @@
 
 (is
  (n-times-average
-  20
+  5
   (trivial-garbage:gc :full t)
   (let* ((a9a-forest
            (make-forest 2 a9a-datamatrix a9a-target
@@ -191,7 +191,7 @@
   
   (is
    (n-times-average
-    20
+    5
     (trivial-garbage:gc :full t)
     (let* ((a9a-forest
              (make-forest 2 a9a-datamatrix a9a-target
@@ -241,7 +241,7 @@
 
 (is
  (n-times-average
-  100
+  10
   (let ((letter-dtree (make-dtree letter-n-class letter-datamatrix letter-target :max-depth 20)))
     (test-dtree letter-dtree letter-datamatrix-test letter-target-test)))
  83.9534912109375d0
@@ -252,7 +252,7 @@
 
 (is
  (n-times-average
-  20
+  5
   (trivial-garbage:gc :full t)
   (let ((letter-forest
           (make-forest letter-n-class letter-datamatrix letter-target
@@ -268,7 +268,7 @@
 
   (is
    (n-times-average
-    20
+    5
     (trivial-garbage:gc :full t)
     (let ((letter-forest
             (make-forest letter-n-class letter-datamatrix letter-target
@@ -282,7 +282,7 @@
 
 (is
  (n-times-average
-  20
+  5
   (trivial-garbage:gc :full t)
   (let* ((letter-forest
            (make-forest letter-n-class letter-datamatrix letter-target
@@ -304,7 +304,7 @@
 
   (is
    (n-times-average
-    20
+    5
     (trivial-garbage:gc :full t)
     (let* ((letter-forest
              (make-forest letter-n-class letter-datamatrix letter-target
