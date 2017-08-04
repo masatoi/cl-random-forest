@@ -57,11 +57,11 @@
 (defun clol-dataset->datamatrix/target-regression (dataset)
   (let* ((len (length dataset))
          (data-dimension (length (cdar dataset)))
-         (target (make-array (list len 1) :element-type 'double-float))
+         (target (make-array len :element-type 'double-float))
          (datamatrix (make-array (list len data-dimension) :element-type 'double-float)))
     (loop for i from 0 to (1- len)
           for datum in dataset
-          do (setf (aref target i 0) (car datum))
+          do (setf (aref target i) (car datum))
              (loop for j from 0 to (1- data-dimension) do
                (setf (aref datamatrix i j) (aref (cdr datum) j))))
     (values datamatrix target)))

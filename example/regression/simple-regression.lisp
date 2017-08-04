@@ -24,10 +24,10 @@
     arr))
 
 (defparameter *target*
-  (let ((arr (make-array (list *n* 1) :element-type 'double-float)))
+  (let ((arr (make-array *n* :element-type 'double-float)))
     (loop for i from 0 below *n* do
-      (setf (aref arr i 0) (+ (sin (aref *datamatrix* i 0))
-                              (random-normal :sd 0.1d0))))
+      (setf (aref arr i) (+ (sin (aref *datamatrix* i 0))
+                            (random-normal :sd 0.1d0))))
     arr))
 
 (defparameter *test*
@@ -38,18 +38,16 @@
     arr))
 
 (defparameter *test-target*
-  (let ((arr (make-array (list *n* 1) :element-type 'double-float)))
+  (let ((arr (make-array *n* :element-type 'double-float)))
     (loop for i from 0 below *n* do
-      (setf (aref arr i 0)
-            (sin (aref *test* i 0))))
+      (setf (aref arr i) (sin (aref *test* i 0))))
     arr))
 
 ;; Plot training-data
 (defun slice (arr)
   (loop for i from 0 below (array-dimension arr 0) collect (aref arr i 0)))
 
-(clgp:plots (list (slice *test-target*)
-                  (slice *target*))
+(clgp:plots (list *test-target* *target*)
             :x-seqs (list (slice *test*)
                           (slice *datamatrix*))
             :style '(lines points))
@@ -82,10 +80,10 @@
 (let ((x-sample-lst (slice *datamatrix*))
       (x-lst (slice *test*)))
   (clgp:plots
-   (list (slice *target*)
-         (slice *test-target*)
-         (loop for i from 0 below *n* collect (aref (predict-rtree *rtree* *test* i) 0))
-         (loop for i from 0 below *n* collect (aref (predict-regression-forest *rforest* *test* i) 0)))
+   (list *target*
+         *test-target*
+         (loop for i from 0 below *n* collect (predict-rtree *rtree* *test* i))
+         (loop for i from 0 below *n* collect (predict-regression-forest *rforest* *test* i)))
    :x-seqs (list x-sample-lst x-lst x-lst x-lst)
    :style '(points lines lines lines)
    :title-list '("training-data" "true" "predict(dtree)" "predict(forest)")

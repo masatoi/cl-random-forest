@@ -13,8 +13,8 @@
 
 (clgp:splot-list (lambda (x y)
                    (rastrigin (list x y)))
-                 (clgp:seq -5.12 5.12 0.08)
-                 (clgp:seq -5.12 5.12 0.08)
+                 (clgp:seq -5.12 5.12 0.16)
+                 (clgp:seq -5.12 5.12 0.16)
                  :map t)
 
 (defparameter *datamatrix*
@@ -26,10 +26,10 @@
     arr))
 
 (defparameter *target*
-  (let ((arr (make-array '(10000 1) :element-type 'double-float :initial-element 0d0)))
+  (let ((arr (make-array 10000 :element-type 'double-float :initial-element 0d0)))
     (loop for i from 0 below (array-dimension arr 0) do
-      (setf (aref arr i 0) (rastrigin (list (aref *datamatrix* i 0)
-                                            (aref *datamatrix* i 1)))))
+      (setf (aref arr i) (rastrigin (list (aref *datamatrix* i 0)
+                                          (aref *datamatrix* i 1)))))
     arr))
 
 (defparameter *test-datamatrix*
@@ -45,13 +45,12 @@
 
 (defparameter *test-target*
   (let* ((n (* 64 64)) ; separate to 64x64 cells (by 0.16)
-         (arr (make-array (list n 1) :element-type 'double-float :initial-element 0d0)))
+         (arr (make-array n :element-type 'double-float :initial-element 0d0)))
     (loop for i from 0 to 63 do
       (loop for j from 0 to 63 do
         (let ((x (- (* i 0.16d0) 5.04d0))
               (y (- (* j 0.16d0) 5.04d0)))
-          (setf (aref arr (+ (* i 64) j) 0)
-                (rastrigin (list x y))))))
+          (setf (aref arr (+ (* i 64) j)) (rastrigin (list x y))))))
     arr))
 
 ;; make decision tree
@@ -75,7 +74,7 @@
 
 ;; plot prediction
 
-(defparameter *predict-matrix*
+(defparameter *predict-matrix-rtree*
   ;; separate to 64x64 cells (by 0.16)
   (let ((arr (make-array (list 64 64) :element-type 'double-float :initial-element 0d0)))
     (loop for i from 0 to 63 do
@@ -83,11 +82,10 @@
         (let ((x (- (* i 0.16d0) 5.04d0))
               (y (- (* j 0.16d0) 5.04d0)))
           (setf (aref arr i j)
-                (aref
-                 (predict-rtree
-                  *rtree*
-                  (make-array '(1 2) :element-type 'double-float
-                                     :initial-contents (list (list x y))) 0) 0)))))
+                (predict-rtree
+                 *rtree*
+                 (make-array '(1 2) :element-type 'double-float
+                                    :initial-contents (list (list x y))) 0)))))
     arr))
 
 (defparameter *predict-matrix-forest*
@@ -98,12 +96,11 @@
         (let ((x (- (* i 0.16d0) 5.04d0))
               (y (- (* j 0.16d0) 5.04d0)))
           (setf (aref arr i j)
-                (aref
-                 (predict-regression-forest
-                  *rforest*
-                  (make-array '(1 2) :element-type 'double-float
-                                     :initial-contents (list (list x y))) 0) 0)))))
+                (predict-regression-forest
+                 *rforest*
+                 (make-array '(1 2) :element-type 'double-float
+                                    :initial-contents (list (list x y))) 0)))))
     arr))
 
-(clgp:splot-matrix *predict-matrix*)
+(clgp:splot-matrix *predict-matrix-rtree*)
 (clgp:splot-matrix *predict-matrix-forest*)
