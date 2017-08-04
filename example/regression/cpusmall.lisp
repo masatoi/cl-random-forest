@@ -14,17 +14,17 @@
 (multiple-value-bind (datamat targetmat)
     (clrf.utils:clol-dataset->datamatrix/target-regression
      (clol.utils:read-data "/home/wiz/datasets/regression/cpusmall.train" 12))
-  (defparameter datamatrix datamat)
-  (defparameter target targetmat))
+  (defparameter cpusmall-datamatrix datamat)
+  (defparameter cpusmall-target targetmat))
 
 (multiple-value-bind (datamat targetmat)
     (clrf.utils:clol-dataset->datamatrix/target-regression
      (clol.utils:read-data "/home/wiz/datasets/regression/cpusmall.test" 12))
-  (defparameter test-datamatrix datamat)
-  (defparameter test-target targetmat))
+  (defparameter cpusmall-datamatrix-test datamat)
+  (defparameter cpusmall-target-test targetmat))
 
-(defparameter rtree (make-rtree datamatrix target :max-depth 10))
-(test-rtree rtree test-datamatrix test-target)
+(defparameter cpusmall-rtree (make-rtree cpusmall-datamatrix cpusmall-target :max-depth 10))
+(test-rtree cpusmall-rtree cpusmall-datamatrix-test cpusmall-target-test)
 ;; RMSE: 3.846092375763221d0
 
 ;; (require :sb-sprof)
@@ -36,9 +36,9 @@
 ;;                             :n-tree 100 :max-depth 15 :bagging-ratio 0.6 :n-trial 10)))
 
 ;; 0.794 seconds
-(defparameter rforest
-  (make-regression-forest datamatrix target
+(defparameter cpusmall-rforest
+  (make-regression-forest cpusmall-datamatrix cpusmall-target
                           :n-tree 100 :max-depth 15 :bagging-ratio 0.6 :n-trial 10))
 
-(test-regression-forest rforest test-datamatrix test-target)
+(test-regression-forest cpusmall-rforest cpusmall-datamatrix-test cpusmall-target-test)
 ;; RMSE: 2.921160545860163d0

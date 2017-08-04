@@ -27,6 +27,23 @@
     (defparameter mnist-datamatrix-test datamat)
     (defparameter mnist-target-test target)))
 
+;;; Make Decision Tree ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defparameter mnist-dtree
+  (make-dtree mnist-n-class mnist-datamatrix mnist-target
+              :max-depth 15 :n-trial 28 :min-region-samples 5))
+
+;; Prediction
+(predict-dtree mnist-dtree mnist-datamatrix 0) ; => 5 (correct)
+
+;; Testing with training data
+(test-dtree mnist-dtree mnist-datamatrix mnist-target)
+;; Accuracy: 90.37333%, Correct: 54224, Total: 60000
+
+;; Testing with test data
+(test-dtree mnist-dtree mnist-datamatrix-test mnist-target-test)
+;; Accuracy: 81.52%, Correct: 8152, Total: 10000
+
 ;;; Make Random Forest ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;; Enable/Disable parallelizaion
@@ -38,6 +55,10 @@
   (make-forest mnist-n-class mnist-datamatrix mnist-target
                :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5))
 
+;; Prediction
+(predict-forest mnist-forest mnist-datamatrix 0) ; => 5 (correct)
+
+;; Testing with test data
 ;; 4.786 seconds, Accuracy: 93.38%
 (test-forest mnist-forest mnist-datamatrix-test mnist-target-test)
 

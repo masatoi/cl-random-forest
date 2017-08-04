@@ -136,6 +136,7 @@
         (incf (aref class-count-array class-label) 1d0)))
     ;; divide by sum
     (let ((sum (loop for c double-float across class-count-array summing c double-float)))
+      (declare (type double-float sum))
       (loop for i fixnum from 0 to (1- n-class) do
         (if (= sum 0d0)
             (setf (aref class-count-array i) (/ 1d0 n-class))
@@ -388,12 +389,15 @@
 ;; decision-tree prediction
 
 (defun predict-dtree (dtree datamatrix datum-index)
+  (declare (optimize (speed 3) (safety 0))
+           (type dtree dtree)
+           (type (simple-array double-float) datamatrix)
+           (type fixnum datum-index))
   (let ((max 0d0)
         (max-class 0)
         (dist (node-class-distribution (find-leaf (dtree-root dtree) datamatrix datum-index)))
         (n-class (dtree-n-class dtree)))
-    (declare (optimize (speed 3) (safety 0))
-             (type double-float max)
+    (declare (type double-float max)
              (type fixnum max-class n-class)
              (type (simple-array double-float) dist))
     (loop for i fixnum from 0 to (1- n-class) do
@@ -409,9 +413,14 @@
     (values accuracy n-correct len)))
 
 (defun test-dtree (dtree datamatrix target &key quiet-p)
+  (declare (optimize (speed 3) (safety 0))
+           (type dtree dtree)
+           (type (simple-array double-float) datamatrix)
+           (type (simple-array fixnum (*)) target))
   (let ((n-correct 0)
-        (len (array-dimension datamatrix 0)))
-    (loop for i fixnum from 0 to (1- len) do
+        (len (length target)))
+    (declare (type fixnum n-correct len))
+    (loop for i fixnum from 0 below len do
       (when (= (predict-dtree dtree datamatrix i)
                (aref target i))
         (incf n-correct)))
@@ -420,18 +429,25 @@
 ;; regression-tree prediction
 
 (defun node-regression-mean (node)
-  (let* ((rtree (node-dtree node))
-         (target (dtree-target rtree))
-         (pred 0d0)
-         (sample-indices (node-sample-indices node))
-         (len (* (length sample-indices) 1d0)))
-    (if (zerop len)
-        pred
-        (progn
-          (loop for i fixnum across sample-indices do
-            (incf pred (aref target i)))
-          (/ pred len)))))
-    
+  (declare (optimize (speed 3) (safety 0))
+           (type node node))
+  (let ((rtree (node-dtree node)))
+    (declare (type dtree rtree))
+    (let ((target (dtree-target rtree))
+          (pred 0d0)
+          (sample-indices (node-sample-indices node)))
+      (declare (type (simple-array double-float) target)
+               (type double-float pred)
+               (type (simple-array fixnum) sample-indices))
+      (let ((len (* (length sample-indices) 1d0)))
+        (declare (type double-float len))
+        (if (zerop len)
+            pred
+            (progn
+              (loop for i fixnum across sample-indices do
+                (incf pred (aref target i)))
+              (/ pred len)))))))
+
 (defun predict-rtree (rtree datamatrix datum-index)
   (node-regression-mean (find-leaf (dtree-root rtree) datamatrix datum-index)))
 
@@ -563,24 +579,32 @@
     class-count-array))
 
 (defun predict-forest (forest datamatrix datum-index)
+  (declare (optimize (speed 3) (safety 0))
+           (type forest forest)
+           (type (simple-array double-float) datamatrix)
+           (type fixnum datum-index))
   (let ((max 0d0)
         (max-class 0)
         (dist (class-distribution-forest forest datamatrix datum-index))
         (n-class (forest-n-class forest)))
-    (declare (optimize (speed 3) (safety 0))
-             (type double-float max)
+    (declare (type double-float max)
              (type fixnum max-class n-class)
              (type (simple-array double-float) dist))
-    (loop for i from 0 to (1- n-class) do
+    (loop for i fixnum from 0 below n-class do
       (when (> (aref dist i) max)
         (setf max (aref dist i)
               max-class i)))
     max-class))
 
 (defun test-forest (forest datamatrix target &key quiet-p)
+  (declare (optimize (speed 3) (safety 0))
+           (type forest forest)
+           (type (simple-array double-float) datamatrix)
+           (type (simple-array fixnum) target))
   (let ((n-correct 0)
-        (len (array-dimension datamatrix 0)))
-    (loop for i fixnum from 0 to (1- len) do
+        (len (length target)))
+    (declare (type fixnum n-correct len))
+    (loop for i fixnum from 0 below len do
       (when (= (predict-forest forest datamatrix i)
                (aref target i))
         (incf n-correct)))
