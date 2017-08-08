@@ -1,5 +1,6 @@
 ;; -*- coding:utf-8; mode:lisp -*-
 
+;; $ ros install masatoi/clgplot
 (ql:quickload :clgplot)
 
 (in-package :clrf)
@@ -75,7 +76,7 @@
 (defparameter *rforest*
   (make-regression-forest *datamatrix* *target*
                           :n-tree 100 :bagging-ratio 0.6
-                          :max-depth 5 :min-region-samples 2 :n-trial 10))
+                          :max-depth 15 :min-region-samples 2 :n-trial 10))
 
 (let ((x-sample-lst (slice *datamatrix*))
       (x-lst (slice *test*)))
@@ -95,3 +96,37 @@
 (test-regression-forest *rforest* *datamatrix* *target*)
 ;; test by testing data
 (test-regression-forest *rforest* *test* *test-target*)
+
+;;; Global refinement
+
+(defparameter *rforest*
+  (make-regression-forest *datamatrix* *target*
+                          :n-tree 500 :bagging-ratio 0.1
+                          :max-depth 5 :min-region-samples 2 :n-trial 10))
+
+(defparameter *refine-learner* (make-regression-refine-learner *rforest* 1d0))
+(defparameter *refine-dataset* (make-refine-dataset *rforest* *datamatrix*))
+(defparameter *refine-testset* (make-refine-dataset *rforest* *test*))
+
+(train-regression-refine-learner *refine-learner* *refine-dataset* *target*)
+(test-regression-refine-learner  *refine-learner* *refine-testset* *test-target*)
+
+(loop repeat 1000 do
+  (train-regression-refine-learner *refine-learner* *refine-dataset* *target*)
+  (test-regression-refine-learner  *refine-learner* *refine-dataset* *target*))
+
+(predict-regression-refine-learner *rforest* *refine-learner* *test* 0)
+
+(let ((x-sample-lst (slice *datamatrix*))
+      (x-lst (slice *test*)))
+  (clgp:plots
+   (list *target*
+         *test-target*
+         (loop for i from 0 below *n* collect (predict-regression-forest *rforest* *test* i))
+         (loop for i from 0 below *n* collect (predict-regression-refine-learner *rforest* *refine-learner* *test* i)))
+   :x-seqs (list x-sample-lst x-lst x-lst x-lst)
+   :style '(points lines lines lines)
+   :title-list '("training-data" "true" "predict(forest)" "Global refinement")
+   ; :output "/home/wiz/Dropbox/tmp/regression-forest-refine.png"
+   :x-range '(-3.3 3.3)
+   :y-range '(-1.5 2.0)))

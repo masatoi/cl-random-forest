@@ -38,7 +38,26 @@
 ;; 0.794 seconds
 (defparameter cpusmall-rforest
   (make-regression-forest cpusmall-datamatrix cpusmall-target
-                          :n-tree 100 :max-depth 15 :bagging-ratio 0.6 :n-trial 10))
+                          :n-tree 100 :max-depth 15 :min-region-samples 5
+                          :bagging-ratio 1.0 :n-trial 4))
 
 (test-regression-forest cpusmall-rforest cpusmall-datamatrix-test cpusmall-target-test)
+(test-regression-forest cpusmall-rforest cpusmall-datamatrix cpusmall-target)
 ;; RMSE: 2.921160545860163d0
+
+;;; Global refinement
+
+(defparameter cpusmall-rforest-500
+  (make-regression-forest cpusmall-datamatrix cpusmall-target
+                          :n-tree 500 :max-depth 5 :bagging-ratio 0.1 :n-trial 10))
+
+(test-regression-forest cpusmall-rforest-500 cpusmall-datamatrix-test cpusmall-target-test)
+
+(defparameter cpusmall-refine-learner (make-regression-refine-learner cpusmall-rforest-500 1d0))
+(defparameter cpusmall-refine-dataset (make-refine-dataset cpusmall-rforest-500 cpusmall-datamatrix))
+(defparameter cpusmall-refine-testset
+  (make-refine-dataset cpusmall-rforest-500 cpusmall-datamatrix-test))
+
+(loop repeat 100 do
+  (train-regression-refine-learner cpusmall-refine-learner cpusmall-refine-dataset cpusmall-target)
+  (test-regression-refine-learner cpusmall-refine-learner cpusmall-refine-testset cpusmall-target-test))

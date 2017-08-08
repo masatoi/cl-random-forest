@@ -628,7 +628,7 @@
       (format t "RMSE: ~A~%" sum-square-error))
     sum-square-error))
 
-;;; Global refinement
+;;; Global refinement (Classification)
 
 (defun make-refine-vector (forest datamatrix datum-index)
   (let ((index-offset (forest-index-offset forest))
@@ -901,6 +901,47 @@
       ;; cleanup
       #+sbcl (sb-ext:gc :full t))
     (format t "Average accuracy: ~f%~%" (/ accuracy-sum n-fold))))
+
+;;; Global refinement (Regression)
+
+(defun make-regression-refine-learner (forest &optional (gamma 0.99d0))
+  (assert (null (forest-n-class forest)))
+  (let ((input-dim (loop for n-leaves in (mapcar #'dtree-max-leaf-index (forest-dtree-list forest))
+                         sum n-leaves)))
+    (clol:make-sparse-rls input-dim gamma)))
+
+(defun predict-regression-refine-learner (forest refine-learner datamatrix datum-index)
+  (let ((sv (make-refine-vector forest datamatrix datum-index)))
+    (clol:sparse-rls-predict refine-learner sv)))
+
+(defun train-regression-refine-learner (refine-learner refine-dataset target)
+  (let* ((n-tree (length (svref refine-dataset 0)))
+         (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
+         (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+         (sv (clol.vector:make-sparse-vector sv-index sv-val)))
+    (loop for i from 0 to (1- (length refine-dataset)) do
+      (setf (clol.vector:sparse-vector-index-vector sv) (svref refine-dataset i))
+      (clol:sparse-rls-update refine-learner sv (aref target i)))))
+
+(defun test-regression-refine-learner (refine-learner refine-dataset target &key quiet-p)
+  (flet ((sq (x) (* x x)))
+    (let* ((len (length refine-dataset))
+           (n-tree (length (svref refine-dataset 0)))
+           (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
+           (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+           (sv (clol.vector:make-sparse-vector sv-index sv-val))
+           (sum-square-error 0d0))
+      (loop for i from 0 to (1- (length refine-dataset)) do
+        (setf (clol.vector:sparse-vector-index-vector sv) (svref refine-dataset i))
+        (incf sum-square-error
+              (sq (- (clol:sparse-rls-predict refine-learner sv)
+                     (aref target i)))))
+      (let ((rmse (sqrt (/ sum-square-error len))))
+        (if (not quiet-p)
+            (format t "RMSE: ~A~%" rmse))
+        rmse))))
+
+
 
 ;;; Global pruning
 
