@@ -3,7 +3,7 @@
 [[http://quickdocs.org/cl-random-forest/][http://quickdocs.org/badge/cl-random-forest.svg]]
 [[https://travis-ci.org/masatoi/cl-random-forest][https://travis-ci.org/masatoi/cl-random-forest.svg?branch=master]]
 
-A implementation of Random Forest with pure Common Lisp. It also includes a implementation of Global Refinement of Random Forest (Ren, Cao, Wei and Sun. "Global Refinement of Random Forest" CVPR2015).
+cl-random-forest is a implementation of Random Forest for multiclass classification written in Common Lisp. It also includes a implementation of Global Refinement of Random Forest (Ren, Cao, Wei and Sun. "Global Refinement of Random Forest" CVPR2015). This refinement makes faster and more accurate than standard Random Forest.
 
 ** Features and Limitations
 
@@ -22,9 +22,11 @@ A implementation of Random Forest with pure Common Lisp. It also includes a impl
 - Currently, regression is not implemented and only classification is available
 
 ** Installation
-In quicklisp's local-projects directory,
 
-#+BEGIN_SRC 
+In quicklisp’s local-projects directory,
+
+#+BEGIN_SRC
+git clone https://github.com/masatoi/cl-online-learning.git
 git clone https://github.com/masatoi/cl-random-forest.git
 #+END_SRC
 
@@ -37,11 +39,86 @@ In Lisp,
 When using Roswell,
 
 #+BEGIN_SRC 
-ros install masatoi/cl-random-forest
+ros install masatoi/cl-online-learning masatoi/cl-random-forest
 #+END_SRC
 
 ** Usage
-See examples. The most basic example is in *example/simple.lisp*.
+*** Classification
+**** Prepare training dataset
+A dataset consists of a target vector and a input data matrix.
+For classification, the target vector should be a fixnum simple-vector and the data matrix should be a 2-dimensional double-float array whose row corresponds one datum.
+Note that the target is a integer starting from 0.
+For example, the following dataset is valid for 4-class classification with 2-dimensional input.
+
+#+BEGIN_SRC lisp
+(defparameter *target*
+  (make-array 11 :element-type 'fixnum
+                 :initial-contents '(0 0 1 1 2 2 2 3 3 3 3)))
+
+(defparameter *datamatrix*
+  (make-array '(11 2)
+              :element-type 'double-float
+              :initial-contents '((-1.0d0 -2.0d0)
+                                  (-2.0d0 -1.5d0)
+                                  (1.0d0 -2.0d0)
+                                  (3.0d0 -1.5d0)
+                                  (-2.0d0 2.0d0)
+                                  (-3.0d0 1.0d0)
+                                  (-2.0d0 1.0d0)
+                                  (3.0d0 2.0d0)
+                                  (2.0d0 2.0d0)
+                                  (1.0d0 2.0d0)
+                                  (1.0d0 1.0d0))))
+#+END_SRC
+
+[[./docs/img/clrf-example-simple.png]]
+
+**** Make Decision Tree
+
+To construct a decision tree, MAKE-DTREE function is available. This function receives the number of classes, the data matrix and the target vector and then returns a decision tree object. This function also receives optionally the max depth of the tree and the minimum number of samples in the region the tree divides and the number of trials of splits.
+
+#+BEGIN_SRC lisp
+(defparameter *n-class* 4)
+
+(defparameter *dtree*
+  (make-dtree *n-class* *datamatrix* *target*
+              :max-depth 5 :min-region-samples 1 :n-trial 10))
+#+END_SRC
+
+Next, make a prediction from the constructed decision tree with PREDICT-DTREE function. For example, to predict the first datum in the data matrix with this decision tree, do as follows.
+
+#+BEGIN_SRC lisp
+(predict-dtree *dtree* *datamatrix* 0)
+;; => 0 (correct class id)
+#+END_SRC
+
+To make predictions for the entire dataset and calculate the accuracy, use TEST-DTREE function.
+
+#+BEGIN_SRC lisp
+(test-dtree *dtree* *datamatrix* *target*)
+;; Accuracy: 100.0%, Correct: 11, Total: 11
+#+END_SRC
+
+**** Make Random Forest
+
+To construct a random forest, MAKE-FOREST function is available. In addition to the MAKE-DTREE function arguments, this function receives optionally the number of decision trees and the bagging ratio that is used for sampling from training data to construct each decision trees.
+
+#+BEGIN_SRC lisp
+(defparameter *forest*
+  (make-forest *n-class* *datamatrix* *target*
+               :n-tree 10 :bagging-ratio 1.0
+               :max-depth 5 :min-region-samples 1 :n-trial 10))
+#+END_SRC
+
+Prediction and test of random forest are done in the almost same way as decision trees. PREDICT-FOREST function and TEST-FOREST function are available for each purpose.
+
+#+BEGIN_SRC lisp
+(predict-forest *forest* *datamatrix* 0)
+;; => 0 (correct class id)
+
+(test-forest *forest* *datamatrix* *target*)
+;; Accuracy: 100.0%, Correct: 11, Total: 11
+#+END_SRC
 
 ** Author
 Satoshi Imai (satoshi.imai@gmail.com)

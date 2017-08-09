@@ -28,7 +28,12 @@
 ;;; Decision tree ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   
 ;; make decision tree
-(defparameter *dtree* (make-dtree *n-class* *datamatrix* *target*))
+(defparameter *dtree*
+  (make-dtree *n-class* *datamatrix* *target*
+              :max-depth 5 :min-region-samples 1 :n-trial 10))
+
+;; prediction
+(predict-dtree *dtree* *datamatrix* 0)
 
 ;; test decision tree
 (test-dtree *dtree* *datamatrix* *target*)
@@ -41,7 +46,12 @@
 
 ;; make random forest
 (defparameter *forest*
-  (make-forest *n-class* *datamatrix* *target* :n-tree 10 :bagging-ratio 1.0))
+  (make-forest *n-class* *datamatrix* *target*
+               :n-tree 10 :bagging-ratio 1.0
+               :max-depth 5 :min-region-samples 1 :n-trial 10))
+
+;; predict
+(predict-forest *forest* *datamatrix* 0)
 
 ;; test random forest
 (test-forest *forest* *datamatrix* *target*)
