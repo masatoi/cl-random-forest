@@ -15,7 +15,7 @@ Cl-random-forest is a implementation of Random Forest for multiclass classificat
 | covtype | 94.89%, 263.7sec | 83.95%, 139.0sec | *96.01%*, *103.9sec* |
 | usps    | 93,47%, 3.583sec | 93.57%, 11.70sec | *94.96%*, *0.686sec* |
 
-- Supporting parallelization of training and prediction
+- Supporting parallelization of training and prediction (tested on SBCL, CCL)
 
 - It also includes Global Pruning algorithm of Random Forest which can make the model extremely compact
 
