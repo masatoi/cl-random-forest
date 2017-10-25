@@ -1015,10 +1015,11 @@
         (node-right-node node) nil)
   node)
 
-(defun pruning! (forest learner &optional (pruning-rate 0.1))
+(defun pruning! (forest learner &optional (pruning-rate 0.1) (min-depth 1))
   (let* ((leaf-parents (collect-leaf-parent-sorted forest learner))
          (pruning-size (floor (* (length leaf-parents) pruning-rate))))
     (loop for i from 0 to (1- pruning-size)
           for node in leaf-parents
-          do (delete-children! node))
+          do (when (>= (node-depth node) min-depth)
+               (delete-children! node)))
     (set-leaf-index-forest! forest)))
