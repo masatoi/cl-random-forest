@@ -3,7 +3,7 @@
 [[http://quickdocs.org/cl-random-forest/][http://quickdocs.org/badge/cl-random-forest.svg]]
 [[https://travis-ci.org/masatoi/cl-random-forest][https://travis-ci.org/masatoi/cl-random-forest.svg?branch=master]]
 
-cl-random-forest is a implementation of Random Forest for multiclass classification written in Common Lisp. It also includes a implementation of Global Refinement of Random Forest (Ren, Cao, Wei and Sun. "Global Refinement of Random Forest" CVPR2015). This refinement makes faster and more accurate than standard Random Forest.
+Cl-random-forest is a implementation of Random Forest for multiclass classification and univariate regression written in Common Lisp. It also includes a implementation of Global Refinement of Random Forest (Ren, Cao, Wei and Sun. "Global Refinement of Random Forest" CVPR2015). This refinement makes faster and more accurate than standard Random Forest.
 
 ** Features and Limitations
 
@@ -15,11 +15,11 @@ cl-random-forest is a implementation of Random Forest for multiclass classificat
 | covtype | 94.89%, 263.7sec | 83.95%, 139.0sec | *96.01%*, *103.9sec* |
 | usps    | 93,47%, 3.583sec | 93.57%, 11.70sec | *94.96%*, *0.686sec* |
 
-- Supporting parallelization of training and prediction (SBCL Only)
+- Supporting parallelization of training and prediction
 
 - It also includes Global Pruning algorithm of Random Forest which can make the model extremely compact
 
-- Currently, regression is not implemented and only classification is available
+- Currently, multivariate regression is not implemented
 
 ** Installation
 
@@ -101,7 +101,7 @@ To make predictions for the entire dataset and calculate the accuracy, use TEST-
 
 **** Make Random Forest
 
-To construct a random forest, MAKE-FOREST function is available. In addition to the MAKE-DTREE function arguments, this function receives optionally the number of decision trees and the bagging ratio that is used for sampling from training data to construct each decision trees.
+To construct a random forest, MAKE-FOREST function is available. In addition to the MAKE-DTREE function arguments, this function receives optionally the number of decision trees and the bagging ratio that is used for sampling from training data to construct each sub decision trees.
 
 #+BEGIN_SRC lisp
 (defparameter *forest*
@@ -119,6 +119,153 @@ Prediction and test of random forest are done in the almost same way as decision
 (test-forest *forest* *datamatrix* *target*)
 ;; Accuracy: 100.0%, Correct: 11, Total: 11
 #+END_SRC
+
+**** Global Refinement of Random Forest
+
+Cl-random-forest has a way to improve pre-trained random forest using global information between each decision trees.
+For this purpose, we make an another dataset from original dataset and pre-trained random forest. 
+When an original datum input into the random forest, the datum enters into a region which corresponds one leaf node for each decision trees.
+The datum of the new dataset represents which position of leaf node the original datum entered for each decision tree.
+Then we train a linear classifier (AROW) using this new dataset and the original target.
+
+#+BEGIN_SRC lisp
+;; Make refine learner
+(defparameter *forest-learner* (make-refine-learner *forest*))
+
+;; Make refine dataset
+(defparameter *forest-refine-dataset* (make-refine-dataset *forest* *datamatrix*))
+
+;; Train refine learner
+(train-refine-learner *forest-learner* *forest-refine-dataset* *target*)
+
+;; Test refine learner
+(test-refine-learner  *forest-learner* *forest-refine-dataset* *target*)
+#+END_SRC
+
+This TRAIN-REFINE-LEARNER function can be used to learn the dataset collectively, but it may be necessary to call this function several times until learning converges. TRAIN-REFINE-LEARNER-PROCESS function is used for training until converged.
+
+#+BEGIN_SRC lisp
+(train-refine-learner-process *forest-learner* *forest-refine-dataset* *target*
+                              *forest-refine-dev-dataset* *dev-target*)
+#+END_SRC
+
+**** Global Pruning of Random Forest
+
+***** Pruning
+Global pruning is the method for compactization of the model size of the random forest with information of the global-refinement learner. A leaf node in a decision tree is no longer necessary when its corresponding element of the weight vector of the global-refinement learner has a small value norm.
+
+To prune a forest destructively, after training the global-refinement learner, run PRUNING! function.
+
+#+BEGIN_SRC lisp
+;; Prune *forest*
+(pruning! *forest* *forest-learner* 0.1)
+#+END_SRC
+
+The third argument is pruning rate. In this case, 10% leaf nodes are deleted.
+
+***** Re-learning
+
+After pruning, it is required to re-learn the global-refinement learner.
+
+#+BEGIN_SRC lisp
+;; Re-learning of refine-learner
+(setf *forest-refine-dataset* (make-refine-dataset *forest* *datamatrix*))
+(setf *forest-learner* (make-refine-learner *forest*))
+(train-refine-learner *forest-learner* *forest-refine-dataset* *target*)
+(test-refine-learner  *forest-learner* *forest-refine-dataset* *target*)
+#+END_SRC
+
+The following figure shows the accuracy for test dataset and the number of leaf nodes when repeating pruning and re-learning on the MNIST dataset. We can see that the performance hardly changes even if the number of leaf nodes decreases to about 1/10.
+
+[[./docs/img/clrf-mnist-pruning.png]]
+
+**** Parallelization
+The following several functions can be parallelized with [[https://lparallel.org/][lparallel]].
+
+- MAKE-FOREST
+- MAKE-REGRESSION-FOREST
+- MAKE-REFINE-DATASET
+- TRAIN-REFINE-LEARNER
+
+To enable/disable parallelization, set lparallel's kernel object. For example, to enable parallelization with 4 threads,
+
+#+BEGIN_SRC lisp
+;; Enable parallelization
+(setf lparallel:*kernel* (lparallel:make-kernel 4))
+
+;; Disable parallelization
+(setf lparallel:*kernel* nil)
+#+END_SRC
+
+*** Regression
+**** Prepare training dataset
+In case of classification, the target is a vector of integer values, whereas in regression is a vector of continuous values.
+
+#+BEGIN_SRC lisp
+(defparameter *n* 100)
+
+(defparameter *datamatrix*
+  (let ((arr (make-array (list *n* 1) :element-type 'double-float)))
+    (loop for i from 0 below *n* do
+      (setf (aref arr i 0) (random-uniform (- pi) pi)))
+    arr))
+
+(defparameter *target*
+  (let ((arr (make-array *n* :element-type 'double-float)))
+    (loop for i from 0 below *n* do
+      (setf (aref arr i) (+ (sin (aref *datamatrix* i 0))
+                            (random-normal :sd 0.1d0))))
+    arr))
+
+(defparameter *test*
+  (let ((arr (make-array (list *n* 1) :element-type 'double-float)))
+    (loop for i from 0 below *n*
+          for x from (- pi) to pi by (/ (* 2 pi) *n*)
+          do (setf (aref arr i 0) x))
+    arr))
+
+(defparameter *test-target*
+  (let ((arr (make-array *n* :element-type 'double-float)))
+    (loop for i from 0 below *n* do
+      (setf (aref arr i) (sin (aref *test* i 0))))
+    arr))
+#+END_SRC
+
+**** Make Regression Tree
+
+#+BEGIN_SRC lisp
+;; Make regression tree
+(defparameter *rtree*
+  (make-rtree *datamatrix* *target* :max-depth 5 :min-region-samples 5 :n-trial 10))
+
+;; Testing
+(test-rtree *rtree* *test* *test-target*)
+; RMSE: 0.09220732459820888d0
+
+;; Make a prediction for first data point of test dataset
+(predict-rtree *rtree* *test* 0)
+; => -0.08374452528780077d0
+#+END_SRC
+
+**** Make Random Forest for Regression
+
+#+BEGIN_SRC lisp
+;; Make regression tree forest
+(defparameter *rforest*
+  (make-regression-forest *datamatrix* *target*
+                          :n-tree 100 :bagging-ratio 0.6
+                          :max-depth 5 :min-region-samples 5 :n-trial 10))
+
+;; Testing
+(test-regression-forest *rforest* *test* *test-target*)
+; RMSE: 0.05006872795207973d0
+
+;; Make a prediction for first data point of test dataset
+(predict-regression-forest *rforest* *test* 0)
+; => -0.16540771296145781d0
+#+END_SRC
+
+[[./docs/img/clrf-regression.png]]
 
 ** Author
 Satoshi Imai (satoshi.imai@gmail.com)

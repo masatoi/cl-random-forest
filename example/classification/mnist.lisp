@@ -10,8 +10,8 @@
 (defparameter mnist-dim 784)
 (defparameter mnist-n-class 10)
 
-(let ((mnist-train (clol.utils:read-data "/home/wiz/tmp/mnist.scale" mnist-dim :multiclass-p t))
-      (mnist-test (clol.utils:read-data "/home/wiz/tmp/mnist.scale.t" mnist-dim :multiclass-p t)))
+(let ((mnist-train (clol.utils:read-data "/home/wiz/datasets/mnist.scale" mnist-dim :multiclass-p t))
+      (mnist-test (clol.utils:read-data "/home/wiz/datasets/mnist.scale.t" mnist-dim :multiclass-p t)))
 
   ;; Add 1 to labels in order to form class-labels beginning from 0
   (dolist (datum mnist-train) (incf (car datum)))
