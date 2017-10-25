@@ -55,7 +55,7 @@
 
 ;; make decision tree
 (defparameter *rtree*
-  (make-rtree *datamatrix* *target* :max-depth 5 :min-region-samples 2 :n-trial 10))
+  (make-rtree *datamatrix* *target* :max-depth 5 :min-region-samples 5 :n-trial 10))
 
 ;; test by training data
 (test-rtree *rtree* *datamatrix* *target*)
@@ -76,7 +76,7 @@
 (defparameter *rforest*
   (make-regression-forest *datamatrix* *target*
                           :n-tree 100 :bagging-ratio 0.6
-                          :max-depth 15 :min-region-samples 2 :n-trial 10))
+                          :max-depth 5 :min-region-samples 5 :n-trial 10))
 
 (let ((x-sample-lst (slice *datamatrix*))
       (x-lst (slice *test*)))
