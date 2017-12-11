@@ -62,6 +62,7 @@
                  :best-index2 0)))
     (setf (dtree-root dtree) (make-root-node dtree :sample-indices sample-indices))
     (split-node! (dtree-root dtree))
+    (clean-dtree dtree)
     dtree))
 
 (defun make-rtree (datamatrix target
@@ -88,7 +89,21 @@
                  :best-index2 0)))
     (setf (dtree-root rtree) (make-root-node rtree :sample-indices sample-indices))
     (split-node! (dtree-root rtree))
+    (clean-dtree rtree)
     rtree))
+
+(defun clean-dtree (dtree)
+  (setf (dtree-datamatrix dtree) nil
+        (dtree-gain-test dtree) nil
+        (dtree-tmp-arr1 dtree) nil
+        (dtree-tmp-index1 dtree) nil
+        (dtree-tmp-arr2 dtree) nil
+        (dtree-tmp-index2 dtree) nil
+        (dtree-best-arr1 dtree) nil
+        (dtree-best-index1 dtree) nil
+        (dtree-best-arr2 dtree) nil
+        (dtree-best-index2 dtree) nil)
+  dtree)
 
 (defstruct (node (:constructor %make-node)
                  (:print-object %print-node))

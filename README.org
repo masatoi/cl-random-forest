@@ -152,7 +152,7 @@ This TRAIN-REFINE-LEARNER function can be used to learn the dataset collectively
 **** Global Pruning of Random Forest
 
 ***** Pruning
-Global pruning is the method for compactization of the model size of the random forest with information of the global-refinement learner. A leaf node in a decision tree is no longer necessary when its corresponding element of the weight vector of the global-refinement learner has a small value norm.
+Global pruning is a method for compactization of the model size of the random forest using information of the global-refinement learner. A leaf node in a decision tree is no longer necessary when its corresponding element of the weight vector of the global-refinement learner has a small value norm.
 
 To prune a forest destructively, after training the global-refinement learner, run PRUNING! function.
 
