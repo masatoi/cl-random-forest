@@ -1,3 +1,5 @@
+;; -*- coding:utf-8; mode:lisp -*-
+
 ;; set dynamic-space-size >= 2500
 
 (in-package :cl-random-forest)

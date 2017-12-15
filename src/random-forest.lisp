@@ -107,7 +107,7 @@
 
 (defstruct (node (:constructor %make-node)
                  (:print-object %print-node))
-  sample-indices depth test-attribute test-threshold information-gain 
+  sample-indices n-sample depth test-attribute test-threshold information-gain
   left-node right-node dtree leaf-index)
 
 (defun %print-node (obj stream)
@@ -116,17 +116,19 @@
           (node-information-gain obj)))
 
 (defun make-root-node (dtree &key sample-indices)
-  (%make-node
-   :information-gain 1d0
-   :sample-indices (if sample-indices
-                     sample-indices
-                     (let ((len (array-dimension (dtree-datamatrix dtree) 0)))
-                       (make-array len :element-type 'fixnum :initial-contents (alexandria:iota len))))
-   :depth 0
-   :dtree dtree))
+  (let ((len (array-dimension (dtree-datamatrix dtree) 0)))
+    (%make-node
+     :information-gain 1d0
+     :sample-indices (if sample-indices
+                         sample-indices
+                         (make-array len :element-type 'fixnum :initial-contents (alexandria:iota len)))
+     :n-sample len
+     :depth 0
+     :dtree dtree)))
 
 (defun make-node (sample-indices parent-node)
   (%make-node :sample-indices sample-indices
+              :n-sample (length sample-indices)
               :depth (1+ (node-depth parent-node))
               :dtree (node-dtree parent-node)))
 
@@ -347,8 +349,10 @@
                     (node-information-gain right-node) right-gain))))))
     (setf (node-sample-indices left-node)
           (make-partial-arr (dtree-best-arr1 dtree) (dtree-best-index1 dtree))
+          (node-n-sample left-node) (length (node-sample-indices left-node))
           (node-sample-indices right-node)
-          (make-partial-arr (dtree-best-arr2 dtree) (dtree-best-index2 dtree)))
+          (make-partial-arr (dtree-best-arr2 dtree) (dtree-best-index2 dtree))
+          (node-n-sample right-node) (length (node-sample-indices right-node)))
     (when (dtree-remove-sample-indices? dtree)
       (setf (node-sample-indices node) nil))
     node))
