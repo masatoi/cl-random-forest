@@ -13,7 +13,8 @@
   :components ((:module "src"
                 :components
                 ((:file "utils")
-                 (:file "random-forest" :depends-on ("utils")))))
+                 (:file "random-forest" :depends-on ("utils"))
+                 (:file "feature-importance" :depends-on ("random-forest")))))
   :description "Random Forest and Global Refinement for Common Lisp"
   :long-description
   #.(with-open-file (stream (merge-pathnames
