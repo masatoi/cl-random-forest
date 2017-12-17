@@ -126,7 +126,7 @@
                sample-indices
                (make-array len :element-type 'fixnum :initial-contents (alexandria:iota len)))))
     (%make-node
-     :information-gain (funcall (dtree-gain-test dtree) sample-indices len dtree)
+     :information-gain 1d0
      :sample-indices sample-indices
      :n-sample len
      :depth 0

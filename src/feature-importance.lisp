@@ -210,19 +210,21 @@
   (let* ((dim (dtree-datum-dim dtree))
          (acc-arr (clol::make-dvec dim 0d0))
          (cnt-arr (clol::make-dvec dim 0d0)))
-    (traverse
-     (lambda (node)
-       (let ((left (node-left-node node))
-             (right (node-right-node node))
-             (len (node-n-sample node))
-             (attr (node-test-attribute node)))
-         (when (and attr (node-test-attribute left) (node-test-attribute right)) ; attr
-           (incf (aref acc-arr attr)
-                 (- (node-information-gain node)
-                    (+ (* (/ (node-n-sample  left) len) (node-information-gain left))
-                       (* (/ (node-n-sample right) len) (node-information-gain right)))))
-           (incf (aref cnt-arr attr) 1d0))))
-     (dtree-root dtree))
+
+    ;; ignore root and leaf nodes
+    (flet ((store-decrease-ig (node)
+             (let ((left (node-left-node node))
+                   (right (node-right-node node))
+                   (len (node-n-sample node))
+                   (attr (node-test-attribute node)))
+               (when (and attr (node-test-attribute left) (node-test-attribute right))
+                 (incf (aref acc-arr attr)
+                       (- (node-information-gain node)
+                          (+ (* (/ (node-n-sample  left) len) (node-information-gain left))
+                             (* (/ (node-n-sample right) len) (node-information-gain right)))))
+                 (incf (aref cnt-arr attr) 1d0)))))
+      (traverse #'store-decrease-ig (node-left-node (dtree-root dtree)))
+      (traverse #'store-decrease-ig (node-right-node (dtree-root dtree))))
     
     (loop for i from 0 below dim do
       (when (> (aref cnt-arr i) 0d0)
@@ -231,7 +233,6 @@
     (let ((min (loop for i from 0 below dim minimize (aref acc-arr i))))
       (loop for i from 0 below dim do
         (setf (aref acc-arr i) (- (aref acc-arr i) min))))
-    
     (normalize-arr! acc-arr)))
 
 (defun forest-feature-importance-ig (forest)
