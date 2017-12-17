@@ -10,8 +10,8 @@
            :make-regression-forest :predict-regression-forest :test-regression-forest
            :make-refine-vector :make-refine-learner :predict-refine-learner :make-refine-dataset
            :train-refine-learner :test-refine-learner :train-refine-learner-process
-           :cross-validation-forest-with-refine-learner
-           :pruning!))
+           :cross-validation-forest-with-refine-learner :pruning!
+           :forest-feature-importance :forest-feature-importance-ig))
 
 (in-package :cl-random-forest)
 
@@ -26,8 +26,12 @@
   best-arr1 best-index1 best-arr2 best-index2
   max-leaf-index id)
 
+(defun rtree? (dtree)
+  (and (eq (type-of dtree) 'dtree)
+       (null (dtree-n-class dtree))))
+
 (defun %print-dtree (obj stream)
-  (if (dtree-n-class obj)
+  (if (not (rtree? obj))
       (format stream "#S(DTREE :N-CLASS ~A :DATUM-DIM ~A :ROOT ~A)"
               (dtree-n-class obj)
               (dtree-datum-dim obj)
@@ -116,12 +120,14 @@
           (node-information-gain obj)))
 
 (defun make-root-node (dtree &key sample-indices)
-  (let ((len (array-dimension (dtree-datamatrix dtree) 0)))
+  (let* ((len (array-dimension (dtree-datamatrix dtree) 0))
+         (sample-indices
+           (if sample-indices
+               sample-indices
+               (make-array len :element-type 'fixnum :initial-contents (alexandria:iota len)))))
     (%make-node
-     :information-gain 1d0
-     :sample-indices (if sample-indices
-                         sample-indices
-                         (make-array len :element-type 'fixnum :initial-contents (alexandria:iota len)))
+     :information-gain (funcall (dtree-gain-test dtree) sample-indices len dtree)
+     :sample-indices sample-indices
      :n-sample len
      :depth 0
      :dtree dtree)))
@@ -335,7 +341,7 @@
                  (right-gain (funcall gain-test (dtree-tmp-arr2 dtree) right-len dtree))
                  (parent-size (length (node-sample-indices node)))
                  (children-gain
-                   (if (dtree-n-class dtree) ; classification
+                   (if (not (rtree? dtree)) ; classification
                        (+ (* -1d0 (/ left-len parent-size)  left-gain)
                           (* -1d0 (/ right-len parent-size) right-gain))
                        ;; regression
@@ -471,8 +477,13 @@
   (node-regression-mean (find-leaf (dtree-root rtree) datamatrix datum-index)))
 
 (defun test-rtree (rtree datamatrix target &key quiet-p)
+  (declare (optimize (speed 3) (safety 0))
+           (type dtree rtree)
+           (type (simple-array double-float) datamatrix target))
   (let ((sum-square-error 0d0)
         (n-data (array-dimension datamatrix 0)))
+    (declare (type double-float sum-square-error)
+             (type fixnum n-data))
     (loop for i fixnum from 0 below n-data do
       (incf sum-square-error (square (- (predict-rtree rtree datamatrix i)
                                         (aref target i)))))

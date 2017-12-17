@@ -48,10 +48,10 @@
 (defun slice (arr)
   (loop for i from 0 below (array-dimension arr 0) collect (aref arr i 0)))
 
-(clgp:plots (list *test-target* *target*)
-            :x-seqs (list (slice *test*)
-                          (slice *datamatrix*))
-            :style '(lines points))
+;; (clgp:plots (list *test-target* *target*)
+;;             :x-seqs (list (slice *test*)
+;;                           (slice *datamatrix*))
+;;             :style '(lines points))
 
 ;; make decision tree
 (defparameter *rtree*
