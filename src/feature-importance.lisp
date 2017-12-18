@@ -206,13 +206,13 @@
 
 ;;; Mean Decrease Information gain
 
-(defun dtree-feature-importance-ig (dtree)
+(defun dtree-feature-importance-impurity (dtree)
   (let* ((dim (dtree-datum-dim dtree))
          (acc-arr (clol::make-dvec dim 0d0))
          (cnt-arr (clol::make-dvec dim 0d0)))
 
     ;; ignore root and leaf nodes
-    (flet ((store-decrease-ig (node)
+    (flet ((store-decrease-impurity (node)
              (let ((left (node-left-node node))
                    (right (node-right-node node))
                    (len (node-n-sample node))
@@ -223,8 +223,8 @@
                           (+ (* (/ (node-n-sample  left) len) (node-information-gain left))
                              (* (/ (node-n-sample right) len) (node-information-gain right)))))
                  (incf (aref cnt-arr attr) 1d0)))))
-      (traverse #'store-decrease-ig (node-left-node (dtree-root dtree)))
-      (traverse #'store-decrease-ig (node-right-node (dtree-root dtree))))
+      (traverse #'store-decrease-impurity (node-left-node (dtree-root dtree)))
+      (traverse #'store-decrease-impurity (node-right-node (dtree-root dtree))))
     
     (loop for i from 0 below dim do
       (when (> (aref cnt-arr i) 0d0)
@@ -235,11 +235,11 @@
         (setf (aref acc-arr i) (- (aref acc-arr i) min))))
     (normalize-arr! acc-arr)))
 
-(defun forest-feature-importance-ig (forest)
+(defun forest-feature-importance-impurity (forest)
   (let* ((len (forest-datum-dim forest))
          (result (make-array len :initial-element 0d0)))
     (dolist (importance-vec
-             (mapcar/pmapcar #'dtree-feature-importance-ig (forest-dtree-list forest)))
+             (mapcar/pmapcar #'dtree-feature-importance-impurity (forest-dtree-list forest)))
       (loop for i from 0 below len do
         (incf (aref result i)
               (aref importance-vec i))))

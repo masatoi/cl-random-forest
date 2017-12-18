@@ -11,7 +11,7 @@
            :make-refine-vector :make-refine-learner :predict-refine-learner :make-refine-dataset
            :train-refine-learner :test-refine-learner :train-refine-learner-process
            :cross-validation-forest-with-refine-learner :pruning!
-           :forest-feature-importance :forest-feature-importance-ig))
+           :forest-feature-importance :forest-feature-importance-by-impurity))
 
 (in-package :cl-random-forest)
 
