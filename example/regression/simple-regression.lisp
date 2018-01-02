@@ -1,7 +1,7 @@
 ;; -*- coding:utf-8; mode:lisp -*-
 
 ;; $ ros install masatoi/clgplot
-(ql:quickload :clgplot)
+;; (ql:quickload :clgplot)
 
 (in-package :clrf)
 
@@ -78,19 +78,19 @@
                           :n-tree 100 :bagging-ratio 0.6
                           :max-depth 5 :min-region-samples 5 :n-trial 10))
 
-(let ((x-sample-lst (slice *datamatrix*))
-      (x-lst (slice *test*)))
-  (clgp:plots
-   (list *target*
-         *test-target*
-         (loop for i from 0 below *n* collect (predict-rtree *rtree* *test* i))
-         (loop for i from 0 below *n* collect (predict-regression-forest *rforest* *test* i)))
-   :x-seqs (list x-sample-lst x-lst x-lst x-lst)
-   :style '(points lines lines lines)
-   :title-list '("training-data" "true" "predict(dtree)" "predict(forest)")
-   ;; :output "/home/wiz/Dropbox/tmp/regression-forest.png"
-   :x-range '(-3.3 3.3)
-   :y-range '(-1.5 2.0)))
+;; (let ((x-sample-lst (slice *datamatrix*))
+;;       (x-lst (slice *test*)))
+;;   (clgp:plots
+;;    (list *target*
+;;          *test-target*
+;;          (loop for i from 0 below *n* collect (predict-rtree *rtree* *test* i))
+;;          (loop for i from 0 below *n* collect (predict-regression-forest *rforest* *test* i)))
+;;    :x-seqs (list x-sample-lst x-lst x-lst x-lst)
+;;    :style '(points lines lines lines)
+;;    :title-list '("training-data" "true" "predict(dtree)" "predict(forest)")
+;;    ;; :output "/home/wiz/Dropbox/tmp/regression-forest.png"
+;;    :x-range '(-3.3 3.3)
+;;    :y-range '(-1.5 2.0)))
 
 ;; test by training data
 (test-regression-forest *rforest* *datamatrix* *target*)
@@ -105,28 +105,31 @@
                           :max-depth 5 :min-region-samples 2 :n-trial 10))
 
 (defparameter *refine-learner* (make-regression-refine-learner *rforest* 1d0))
-(defparameter *refine-dataset* (make-refine-dataset *rforest* *datamatrix*))
-(defparameter *refine-testset* (make-refine-dataset *rforest* *test*))
+(defparameter *refine-dataset* (make-regression-refine-dataset *rforest* *datamatrix*))
+(defparameter *refine-testset* (make-regression-refine-dataset *rforest* *test*))
 
 (train-regression-refine-learner *refine-learner* *refine-dataset* *target*)
 (test-regression-refine-learner  *refine-learner* *refine-testset* *test-target*)
 
-(loop repeat 1000 do
+(loop repeat 20 do
   (train-regression-refine-learner *refine-learner* *refine-dataset* *target*)
   (test-regression-refine-learner  *refine-learner* *refine-dataset* *target*))
 
 (predict-regression-refine-learner *rforest* *refine-learner* *test* 0)
 
-(let ((x-sample-lst (slice *datamatrix*))
-      (x-lst (slice *test*)))
-  (clgp:plots
-   (list *target*
-         *test-target*
-         (loop for i from 0 below *n* collect (predict-regression-forest *rforest* *test* i))
-         (loop for i from 0 below *n* collect (predict-regression-refine-learner *rforest* *refine-learner* *test* i)))
-   :x-seqs (list x-sample-lst x-lst x-lst x-lst)
-   :style '(points lines lines lines)
-   :title-list '("training-data" "true" "predict(forest)" "Global refinement")
-   ; :output "/home/wiz/Dropbox/tmp/regression-forest-refine.png"
-   :x-range '(-3.3 3.3)
-   :y-range '(-1.5 2.0)))
+;; (let ((x-sample-lst (slice *datamatrix*))
+;;       (x-lst (slice *test*)))
+;;   (clgp:plots
+;;    (list ; *target*
+;;          *test-target*
+;;          (loop for i from 0 below *n* collect (predict-regression-forest *rforest* *test* i))
+;;          (loop for i from 0 below *n* collect (predict-regression-refine-learner *rforest* *refine-learner* *test* i)))
+;;    :x-seqs (list ; x-sample-lst
+;;             x-lst x-lst x-lst)
+;;    :style '(;points
+;;             lines lines lines)
+;;    :title-list '(;"training-data"
+;;                  "true" "predict(forest)" "Global refinement")
+;;    ; :output "/home/wiz/Dropbox/tmp/regression-forest-refine.png"
+;;    :x-range '(-3.3 3.3)
+;;    :y-range '(-1.5 2.0)))
