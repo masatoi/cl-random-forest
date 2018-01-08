@@ -21,7 +21,7 @@
                   (:print-object %print-dtree))
   n-class class-count-array ; for classification
   datum-dim datamatrix target
-  root max-depth min-region-samples n-trial gain-test remove-sample-indices?
+  root max-depth min-region-samples n-trial gain-test remove-sample-indices? save-parent-node?
   tmp-arr1 tmp-index1 tmp-arr2 tmp-index2
   best-arr1 best-index1 best-arr2 best-index2
   max-leaf-index id)
@@ -42,7 +42,10 @@
 
 (defun make-dtree (n-class datamatrix target
                    &key (max-depth 5) (min-region-samples 1) (n-trial 10)
-                     (gain-test #'entropy) (remove-sample-indices? t) sample-indices)
+                     (gain-test #'entropy)
+                     (remove-sample-indices? t)
+                     (save-parent-node? nil)
+                     sample-indices)
   (let* ((len (if sample-indices
                   (length sample-indices)
                   (array-dimension datamatrix 0)))
@@ -56,6 +59,7 @@
                  :n-trial n-trial
                  :gain-test gain-test
                  :remove-sample-indices? remove-sample-indices?
+                 :save-parent-node? save-parent-node?
                  :tmp-arr1 (make-array len :element-type 'fixnum :initial-element 0)
                  :tmp-index1 0
                  :tmp-arr2 (make-array len :element-type 'fixnum :initial-element 0)
@@ -66,12 +70,15 @@
                  :best-index2 0)))
     (setf (dtree-root dtree) (make-root-node dtree :sample-indices sample-indices))
     (split-node! (dtree-root dtree))
-    (clean-dtree dtree)
+    (clean-dtree! dtree)
     dtree))
 
 (defun make-rtree (datamatrix target
                    &key (max-depth 5) (min-region-samples 1) (n-trial 10)
-                     (gain-test #'variance) (remove-sample-indices? t) sample-indices)
+                     (gain-test #'variance)
+                     (remove-sample-indices? t)
+                     (save-parent-node? nil)
+                     sample-indices)
   (let* ((len (if sample-indices
                   (length sample-indices)
                   (array-dimension datamatrix 0)))
@@ -83,6 +90,7 @@
                  :n-trial n-trial
                  :gain-test gain-test
                  :remove-sample-indices? remove-sample-indices?
+                 :save-parent-node? save-parent-node?
                  :tmp-arr1 (make-array len :element-type 'fixnum :initial-element 0)
                  :tmp-index1 0
                  :tmp-arr2 (make-array len :element-type 'fixnum :initial-element 0)
@@ -93,10 +101,10 @@
                  :best-index2 0)))
     (setf (dtree-root rtree) (make-root-node rtree :sample-indices sample-indices))
     (split-node! (dtree-root rtree))
-    (clean-dtree rtree)
+    (clean-dtree! rtree)
     rtree))
 
-(defun clean-dtree (dtree)
+(defun clean-dtree! (dtree)
   (setf (dtree-datamatrix dtree) nil
         (dtree-gain-test dtree) nil
         (dtree-tmp-arr1 dtree) nil
@@ -112,7 +120,7 @@
 (defstruct (node (:constructor %make-node)
                  (:print-object %print-node))
   sample-indices n-sample depth test-attribute test-threshold information-gain
-  left-node right-node dtree leaf-index)
+  parent-node left-node right-node dtree leaf-index)
 
 (defun %print-node (obj stream)
   (format stream "#S(NODE :TEST ~A :GAIN ~A)"
@@ -361,6 +369,9 @@
           (node-n-sample right-node) (length (node-sample-indices right-node)))
     (when (dtree-remove-sample-indices? dtree)
       (setf (node-sample-indices node) nil))
+    (when (dtree-save-parent-node? dtree)
+      (setf (node-parent-node left-node)  node
+            (node-parent-node right-node) node))
     node))
 
 (defun stop-split? (node)
@@ -519,7 +530,8 @@
 
 (defun make-forest (n-class datamatrix target
                     &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
-                      (n-trial 10) (gain-test #'entropy) (remove-sample-indices? t))
+                      (n-trial 10) (gain-test #'entropy)
+                      (remove-sample-indices? t) (save-parent-node? nil))
   (let ((forest (%make-forest
                  :n-tree n-tree
                  :bagging-ratio bagging-ratio
@@ -541,6 +553,7 @@
                   :n-trial n-trial
                   :gain-test gain-test
                   :remove-sample-indices? remove-sample-indices?
+                  :save-parent-node? save-parent-node?
                   :sample-indices (bootstrap-sample-indices
                                    (floor (* (array-dimension datamatrix 0) bagging-ratio))
                                    datamatrix)))
@@ -554,7 +567,8 @@
 
 (defun make-regression-forest (datamatrix target
                     &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
-                      (n-trial 10) (gain-test #'variance) (remove-sample-indices? t))
+                      (n-trial 10) (gain-test #'variance)
+                      (remove-sample-indices? t) (save-parent-node? nil))
   (let ((forest (%make-forest
                  :n-tree n-tree
                  :bagging-ratio bagging-ratio
@@ -574,6 +588,7 @@
                   :n-trial n-trial
                   :gain-test gain-test
                   :remove-sample-indices? remove-sample-indices?
+                  :save-parent-node? save-parent-node? 
                   :sample-indices (bootstrap-sample-indices
                                    (floor (* (array-dimension datamatrix 0) bagging-ratio))
                                    datamatrix)))
