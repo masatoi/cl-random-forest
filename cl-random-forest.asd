@@ -14,6 +14,7 @@
                 :components
                 ((:file "utils")
                  (:file "random-forest" :depends-on ("utils"))
+                 (:file "reconstruction" :depends-on ("random-forest"))
                  (:file "feature-importance" :depends-on ("random-forest")))))
   :description "Random Forest and Global Refinement for Common Lisp"
   :long-description
