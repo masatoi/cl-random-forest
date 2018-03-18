@@ -7,6 +7,7 @@
   (:export :dotimes/pdotimes :mapcar/pmapcar :mapc/pmapc :push-ntimes
            :clol-dataset->datamatrix/target
            :clol-dataset->datamatrix/target-regression
+           :read-data :read-data-regression
            :write-to-r-format-from-clol-dataset))
 
 (in-package :cl-random-forest.utils)
@@ -65,6 +66,54 @@
              (loop for j from 0 to (1- data-dimension) do
                (setf (aref datamatrix i j) (aref (cdr datum) j))))
     (values datamatrix target)))
+
+(defmacro do-index-value-list ((index value list) &body body)
+  (let ((iter (gensym))
+        (inner-list (gensym)))
+    `(labels ((,iter (,inner-list)
+                (when ,inner-list
+                  (let ((,index (car ,inner-list))
+                        (,value (cadr ,inner-list)))
+                    ,@body)
+                  (,iter (cddr ,inner-list)))))
+       (,iter ,list))))
+
+
+;; Read from libsvm format data
+
+(defun read-data (data-path data-dimension)
+  (multiple-value-bind (data-list dim)
+      (svmformat:parse-file data-path)
+    (let* ((dim (if data-dimension data-dimension dim))
+           (len (length data-list))
+           (target (make-array len :element-type 'fixnum :initial-element 0))
+           (datamatrix (make-array (list len dim)
+                                   :element-type 'double-float
+                                   :initial-element 0d0)))
+      (loop for i from 0
+            for datum in data-list
+            do
+               (setf (aref target i) (1- (car datum)))
+               (do-index-value-list (j v (cdr datum))
+                 (setf (aref datamatrix i (1- j)) (coerce v 'double-float))))
+      (values datamatrix target))))
+
+(defun read-data-regression (data-path data-dimension)
+  (multiple-value-bind (data-list dim)
+      (svmformat:parse-file data-path)
+    (let* ((dim (if data-dimension data-dimension dim))
+           (len (length data-list))
+           (target (make-array len :element-type 'double-float :initial-element 0d0))
+           (datamatrix (make-array (list len dim)
+                                   :element-type 'double-float
+                                   :initial-element 0d0)))
+      (loop for i from 0
+            for datum in data-list
+            do
+               (setf (aref target i) (coerce (car datum) 'double-float))
+               (do-index-value-list (j v (cdr datum))
+                 (setf (aref datamatrix i (1- j)) (coerce v 'double-float))))
+      (values datamatrix target))))
 
 ;;; write for R
 

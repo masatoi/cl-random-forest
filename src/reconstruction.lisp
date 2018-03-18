@@ -9,7 +9,7 @@
         (let ((attribute (node-test-attribute parent-node))
               (threshold (node-test-threshold parent-node)))
           (if (eq (node-left-node parent-node) node)
-              (when (> threshold (aref input-range-array 0 attribute)) ; left-node
+              (when (>= threshold (aref input-range-array 0 attribute)) ; left-node
                 (setf (aref input-range-array 0 attribute) threshold))
               (when (< threshold (aref input-range-array 1 attribute)) ; right-node
                 (setf (aref input-range-array 1 attribute) threshold)))
