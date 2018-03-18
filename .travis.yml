@@ -30,7 +30,7 @@ matrix:
 
 install:
   - curl -L https://raw.githubusercontent.com/roswell/roswell/release/scripts/install-for-ci.sh | sh
-  - ros install prove masatoi/cl-online-learning
+  - ros install prove masatoi/cl-libsvm-format masatoi/cl-online-learning
 
 cache:
   directories:
