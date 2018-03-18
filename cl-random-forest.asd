@@ -9,7 +9,7 @@
   :version "0.1"
   :author "Satoshi Imai"
   :license "MIT Licence"
-  :depends-on (:cl-online-learning :alexandria :lparallel)
+  :depends-on (:cl-libsvm-format :cl-online-learning :alexandria :lparallel)
   :components ((:module "src"
                 :components
                 ((:file "utils")
