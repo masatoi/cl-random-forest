@@ -27,7 +27,7 @@
 ;; Note that SAVE-PARENT-NODE? keyword option is true
 (defparameter mnist-forest
   (make-forest mnist-n-class mnist-datamatrix mnist-target
-               :n-tree 1000 :bagging-ratio 0.1 :max-depth 30 :n-trial 28 :min-region-samples 5
+               :n-tree 500 :bagging-ratio 0.1 :max-depth 15 :n-trial 28 :min-region-samples 5
                :save-parent-node? t))
 
 ;; Execute reconstruction
@@ -53,8 +53,8 @@
               (aref *reconstruction* (+ (* i 28) j)))))
     arr))
 
-(clgp:splot-matrix *original-image* :palette :greys)
-(clgp:splot-matrix *reconstruction-image* :palette :greys)
+(clgp:splot-matrix *original-image* :palette :greys :output "/home/wiz/Dropbox/tmp/rf-reconstruction-orig.png")
+(clgp:splot-matrix *reconstruction-image* :palette :greys  :output "/home/wiz/Dropbox/tmp/rf-reconstruction-recn.png")
 
 ;; Encode/Decode a datum
 

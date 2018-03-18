@@ -13,17 +13,15 @@
 (defparameter covtype-dim 54)
 (defparameter covtype-n-class 7)
 
-(let ((covtype-train (clol.utils:read-data "/home/wiz/datasets/covtype.scale.train" covtype-dim :multiclass-p t))
-      (covtype-test (clol.utils:read-data "/home/wiz/datasets/covtype.scale.test" covtype-dim :multiclass-p t)))
-  (multiple-value-bind (datamat target)
-      (clol-dataset->datamatrix/target covtype-train)
-    (defparameter covtype-datamatrix datamat)
-    (defparameter covtype-target target))
+(multiple-value-bind (datamat target)
+    (read-data "/home/wiz/datasets/covtype.scale.train" covtype-dim)
+  (defparameter covtype-datamatrix datamat)
+  (defparameter covtype-target target))
 
-  (multiple-value-bind (datamat target)
-      (clol-dataset->datamatrix/target covtype-test)
-    (defparameter covtype-datamatrix-test datamat)
-    (defparameter covtype-target-test target)))
+(multiple-value-bind (datamat target)
+    (read-data "/home/wiz/datasets/covtype.scale.test" covtype-dim)
+  (defparameter covtype-datamatrix-test datamat)
+  (defparameter covtype-target-test target))
 
 ;; dtree
 (defparameter covtype-dtree

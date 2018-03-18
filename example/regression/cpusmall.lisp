@@ -11,15 +11,15 @@
 ;; $ mv cpusmall_scale.shufaa cpusmall.train
 ;; $ mv cpusmall_scale.shufab cpusmall.test
 
+(defparameter cpusmall-dim 12)
+
 (multiple-value-bind (datamat targetmat)
-    (clrf.utils:clol-dataset->datamatrix/target-regression
-     (clol.utils:read-data "/home/wiz/datasets/regression/cpusmall.train" 12))
+    (read-data-regression "/home/wiz/datasets/regression/cpusmall.train" cpusmall-dim)
   (defparameter cpusmall-datamatrix datamat)
   (defparameter cpusmall-target targetmat))
 
 (multiple-value-bind (datamat targetmat)
-    (clrf.utils:clol-dataset->datamatrix/target-regression
-     (clol.utils:read-data "/home/wiz/datasets/regression/cpusmall.test" 12))
+    (read-data-regression "/home/wiz/datasets/regression/cpusmall.test" cpusmall-dim)
   (defparameter cpusmall-datamatrix-test datamat)
   (defparameter cpusmall-target-test targetmat))
 

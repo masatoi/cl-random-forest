@@ -7,17 +7,17 @@
 (defparameter usps-dim 256)
 (defparameter usps-n-class 10)
 
-(let ((usps-train (clol.utils:read-data "/home/wiz/datasets/usps" usps-dim :multiclass-p t))
-      (usps-test (clol.utils:read-data "/home/wiz/datasets/usps.t" usps-dim :multiclass-p t)))
-  (multiple-value-bind (datamat target)
-      (clol-dataset->datamatrix/target usps-train)
-    (defparameter usps-datamatrix datamat)
-    (defparameter usps-target target))
-  
-  (multiple-value-bind (datamat target)
-      (clol-dataset->datamatrix/target usps-test)
-    (defparameter usps-datamatrix-test datamat)
-    (defparameter usps-target-test target)))
+;; Read training data
+(multiple-value-bind (datamat target)
+    (read-data "/home/wiz/datasets/usps" usps-dim)
+  (defparameter usps-datamatrix datamat)
+  (defparameter usps-target target))
+
+;; Read test data
+(multiple-value-bind (datamat target)
+    (read-data "/home/wiz/datasets/usps.t" usps-dim)
+  (defparameter usps-datamatrix-test datamat)
+  (defparameter usps-target-test target))
 
 ;; dtree
 (defparameter usps-dtree

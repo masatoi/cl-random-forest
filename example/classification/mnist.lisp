@@ -12,22 +12,24 @@
 (defparameter mnist-dim 784)
 (defparameter mnist-n-class 10)
 
-(let ((mnist-train (clol.utils:read-data "/home/wiz/datasets/mnist.scale" mnist-dim :multiclass-p t))
-      (mnist-test (clol.utils:read-data "/home/wiz/datasets/mnist.scale.t" mnist-dim :multiclass-p t)))
+;; Read training data
+(multiple-value-bind (datamat target)
+    (read-data "/home/wiz/datasets/mnist.scale" mnist-dim)
+  (defparameter mnist-datamatrix datamat)
+  (defparameter mnist-target target))
 
-  ;; Add 1 to labels in order to form class-labels beginning from 0
-  (dolist (datum mnist-train) (incf (car datum)))
-  (dolist (datum mnist-test)  (incf (car datum)))
+;; Read test data
+(multiple-value-bind (datamat target)
+    (read-data "/home/wiz/datasets/mnist.scale.t" mnist-dim)
+  (defparameter mnist-datamatrix-test datamat)
+  (defparameter mnist-target-test target))
 
-  (multiple-value-bind (datamat target)
-      (clol-dataset->datamatrix/target mnist-train)
-    (defparameter mnist-datamatrix datamat)
-    (defparameter mnist-target target))
-  
-  (multiple-value-bind (datamat target)
-      (clol-dataset->datamatrix/target mnist-test)
-    (defparameter mnist-datamatrix-test datamat)
-    (defparameter mnist-target-test target)))
+;; Add 1 to labels because the labels of this dataset begin from 0
+(loop for i from 0 below (length mnist-target) do
+  (incf (aref mnist-target i)))
+
+(loop for i from 0 below (length mnist-target-test) do
+  (incf (aref mnist-target-test i)))
 
 ;;; Make Decision Tree ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

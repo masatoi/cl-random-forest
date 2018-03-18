@@ -7,28 +7,28 @@
 (defparameter a9a-dim 123)
 (defparameter a9a-n-class 2)
 
-(let ((a9a-train (clol.utils:read-data "/home/wiz/datasets/a9a" a9a-dim))
-      (a9a-test (clol.utils:read-data "/home/wiz/datasets/a9a.t" a9a-dim)))
+;; Read training data
+(multiple-value-bind (datamat target)
+    (read-data "/home/wiz/datasets/a9a" a9a-dim)
+  (defparameter a9a-datamatrix datamat)
+  (defparameter a9a-target target))
 
-  (dolist (datum a9a-train)
-    (if (> (car datum) 0d0)
-        (setf (car datum) 0)
-        (setf (car datum) 1)))
+;; Change from binary data to 2-class data
+(loop for i from 0 below (length a9a-target) do
+  (if (> (aref a9a-target i) 0)
+      (setf (aref a9a-target i) 0)
+      (setf (aref a9a-target i) 1)))
 
-  (dolist (datum a9a-test)
-    (if (> (car datum) 0d0)
-        (setf (car datum) 0)
-        (setf (car datum) 1)))
+;; Read test data
+(multiple-value-bind (datamat target)
+    (read-data "/home/wiz/datasets/a9a.t" a9a-dim)
+  (defparameter a9a-datamatrix-test datamat)
+  (defparameter a9a-target-test target))
 
-  (multiple-value-bind (datamat target)
-      (clol-dataset->datamatrix/target a9a-train)
-    (defparameter a9a-datamatrix datamat)
-    (defparameter a9a-target target))
-
-  (multiple-value-bind (datamat target)
-      (clol-dataset->datamatrix/target a9a-test)
-    (defparameter a9a-datamatrix-test datamat)
-    (defparameter a9a-target-test target)))
+(loop for i from 0 below (length a9a-target-test) do
+  (if (> (aref a9a-target-test i) 0)
+      (setf (aref a9a-target-test i) 0)
+      (setf (aref a9a-target-test i) 1)))
 
 ;; dtree
 (defparameter a9a-dtree (make-dtree a9a-n-class a9a-datamatrix a9a-target :max-depth 20))

@@ -8,28 +8,28 @@
 (defparameter mushrooms-dim 112)
 (defparameter mushrooms-n-class 2)
 
-;; Load dataset
+;; Read training data
+(multiple-value-bind (datamat target)
+    (read-data "/home/wiz/datasets/mushrooms-train" mushrooms-dim)
+  (defparameter mushrooms-datamatrix datamat)
+  (defparameter mushrooms-target target))
 
-(let ((mushrooms-train (clol.utils:read-data "/home/wiz/datasets/mushrooms-train" mushrooms-dim))
-      (mushrooms-test (clol.utils:read-data "/home/wiz/datasets/mushrooms-test" mushrooms-dim)))
-  (dolist (datum mushrooms-train)
-    (if (> (car datum) 0d0)
-        (setf (car datum) 1)
-        (setf (car datum) 0)))
-  (dolist (datum mushrooms-test)
-    (if (> (car datum) 0d0)
-        (setf (car datum) 1)
-        (setf (car datum) 0)))
-  
-  (multiple-value-bind (datamat target)
-      (clol-dataset->datamatrix/target mushrooms-train)
-    (defparameter mushrooms-datamatrix datamat)
-    (defparameter mushrooms-target target))
+;; Change from binary data to 2-class data
+(loop for i from 0 below (length mushrooms-target) do
+  (if (> (aref mushrooms-target i) 0)
+      (setf (aref mushrooms-target i) 0)
+      (setf (aref mushrooms-target i) 1)))
 
-  (multiple-value-bind (datamat target)
-      (clol-dataset->datamatrix/target mushrooms-test)
-    (defparameter mushrooms-datamatrix-test datamat)
-    (defparameter mushrooms-target-test target)))
+;; Read test data
+(multiple-value-bind (datamat target)
+    (read-data "/home/wiz/datasets/mushrooms-test" mushrooms-dim)
+  (defparameter mushrooms-datamatrix-test datamat)
+  (defparameter mushrooms-target-test target))
+
+(loop for i from 0 below (length mushrooms-target-test) do
+  (if (> (aref mushrooms-target-test i) 0)
+      (setf (aref mushrooms-target-test i) 0)
+      (setf (aref mushrooms-target-test i) 1)))
 
 ;; Make decision tree
 

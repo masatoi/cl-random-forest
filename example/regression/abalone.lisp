@@ -11,15 +11,15 @@
 ;; $ mv abalone_scale.shufaa abalone.train
 ;; $ mv abalone_scale.shufab abalone.test
 
+(defparameter dim 8)
+
 (multiple-value-bind (datamat targetmat)
-    (clrf.utils:clol-dataset->datamatrix/target-regression
-     (clol.utils:read-data "/home/wiz/datasets/regression/abalone.train" 8))
+    (read-data-regression "/home/wiz/datasets/regression/abalone.train" dim)
   (defparameter datamatrix datamat)
   (defparameter target targetmat))
 
 (multiple-value-bind (datamat targetmat)
-    (clrf.utils:clol-dataset->datamatrix/target-regression
-     (clol.utils:read-data "/home/wiz/datasets/regression/abalone.test" 8))
+    (read-data-regression "/home/wiz/datasets/regression/abalone.test" dim)
   (defparameter test-datamatrix datamat)
   (defparameter test-target targetmat))
 

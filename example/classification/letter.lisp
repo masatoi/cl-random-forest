@@ -7,18 +7,15 @@
 (defparameter letter-dim 16)
 (defparameter letter-n-class 26)
 
-(let ((letter-train (clol.utils:read-data "/home/wiz/datasets/letter.scale" letter-dim :multiclass-p t))
-      (letter-test (clol.utils:read-data "/home/wiz/datasets/letter.scale.t" letter-dim :multiclass-p t)))
+(multiple-value-bind (datamat target)
+    (read-data "/home/wiz/datasets/letter.scale" letter-dim)
+  (defparameter letter-datamatrix datamat)
+  (defparameter letter-target target))
 
-  (multiple-value-bind (datamat target)
-      (clol-dataset->datamatrix/target letter-train)
-    (defparameter letter-datamatrix datamat)
-    (defparameter letter-target target))
-
-  (multiple-value-bind (datamat target)
-      (clol-dataset->datamatrix/target letter-test)
-    (defparameter letter-datamatrix-test datamat)
-    (defparameter letter-target-test target)))
+(multiple-value-bind (datamat target)
+    (read-data "/home/wiz/datasets/letter.scale.t" letter-dim)
+  (defparameter letter-datamatrix-test datamat)
+  (defparameter letter-target-test target))
 
 ;; dtree
 (defparameter letter-dtree
