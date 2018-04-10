@@ -58,43 +58,43 @@
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 ;; (setf lparallel:*kernel* nil)
 
-;; 6.079 seconds (1 core), 2.116 seconds (4 core)
-(defparameter forest
-  (make-forest n-class x y
-               :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 32 :min-region-samples 5))
-
+;; 21.545 seconds of real time (4 core)
+(time
+ (defparameter forest
+   (make-forest n-class x y
+                :n-tree 1000 :bagging-ratio 0.1 :max-depth 15 :n-trial 32 :min-region-samples 5)))
 ;; Prediction
 (predict-forest forest x 0) ; => 6 (correct)
 
 ;; Testing with test data
 (test-forest forest x.t y.t)
-;; Accuracy: 38.2%, Correct: 3820, Total: 10000
+;; Accuracy: 42.629997%, Correct: 4263, Total: 10000
 
 ;;; Global Refinement of Random Forest ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Generate sparse data from Random Forest
 
-;; 2.625 seconds of real time (4 core)
-(defparameter x.r (make-refine-dataset forest x))
+;; 5.758 seconds of real time (4 core)
+(time
+ (defparameter x.r (make-refine-dataset forest x)))
 
-;; 0.995 seconds (1 core), 0.322 seconds (4 core)
-(defparameter x.r.t
-  (make-refine-dataset forest x.t))
+;; 1.111 seconds of real time (4 core)
+(time
+ (defparameter x.r.t
+   (make-refine-dataset forest x.t)))
 
 (defparameter refine-learner (make-refine-learner forest))
 
-;; 4.347 seconds (1 core), 2.281 seconds (4 core), Accuracy: 98.259%
 (train-refine-learner-process refine-learner x.r y x.r.t y.t)
-
 (test-refine-learner refine-learner x.r.t y.t)
-;; Accuracy: 48.32%, Correct: 4832, Total: 10000
+;; Accuracy: 54.420002%, Correct: 5442, Total: 10000
 
-;; 5.859 seconds (1 core), 4.090 seconds (4 core), Accuracy: 98.29%
 (loop repeat 10 do
   (train-refine-learner refine-learner x.r y)
   (test-refine-learner refine-learner x.r.t y.t))
 
 (test-refine-learner refine-learner x.r y)
+;; Accuracy: 100.0%, Correct: 50000, Total: 50000
 
 ;; Make a prediction
 (predict-refine-learner forest refine-learner x 0) ; => 6
