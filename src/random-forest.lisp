@@ -121,7 +121,7 @@
 (defstruct (node (:constructor %make-node)
                  (:print-object %print-node))
   sample-indices n-sample depth test-attribute test-threshold information-gain
-  parent-node left-node right-node dtree leaf-index)
+  parent-node left-node right-node dtree leaf-index leaf-prediction)
 
 (defun %print-node (obj stream)
   (format stream "#S(NODE :TEST ~A :GAIN ~A)"
@@ -159,17 +159,17 @@
              (type (simple-array fixnum) target)
              (type (simple-array double-float) class-count-array))
     ;; init
-    (loop for i fixnum from 0 to (1- n-class) do
+    (loop for i fixnum from 0 below n-class do
       (setf (aref class-count-array i) 0d0))
     ;; count
-    (loop for i fixnum from 0 to (1- terminate-index) do
+    (loop for i fixnum from 0 below terminate-index do
       (let* ((datum-index (aref sample-indices i))
              (class-label (aref target datum-index)))
         (incf (aref class-count-array class-label) 1d0)))
     ;; divide by sum
     (let ((sum (loop for c double-float across class-count-array summing c double-float)))
       (declare (type double-float sum))
-      (loop for i fixnum from 0 to (1- n-class) do
+      (loop for i fixnum from 0 below n-class do
         (if (= sum 0d0)
             (setf (aref class-count-array i) (/ 1d0 n-class))
             (setf (aref class-count-array i) (/ (aref class-count-array i) sum)))))
@@ -191,7 +191,7 @@
     (declare (type (simple-array double-float) dist)
              (type fixnum n-class)
              (type double-float sum))
-    (loop for i fixnum from 0 to (1- n-class) do
+    (loop for i fixnum from 0 below n-class do
       (let ((pk (aref dist i)))
         (declare (type (double-float 0d0) pk))
         (setf sum (+ sum
@@ -211,7 +211,7 @@
     (declare (type (simple-array double-float) dist)
              (type fixnum n-class)
              (type double-float sum))
-    (loop for i fixnum from 0 to (1- n-class) do
+    (loop for i fixnum from 0 below n-class do
       (let ((pk (aref dist i)))
         (declare (type (double-float 0d0) pk))
         (setf sum (+ sum
@@ -244,7 +244,7 @@
           (declare (type double-float ave))
           (let ((sum-of-squares 0d0))
             (declare (type double-float sum-of-squares))
-            (loop for i fixnum from 0 to (1- terminate-index) do
+            (loop for i fixnum from 0 below terminate-index do
               (incf sum-of-squares
                     (square (- (aref target (aref sample-indices i))
                                ave))))
@@ -313,9 +313,9 @@
     (declare (optimize (speed 3) (safety 0))
              (type fixnum tmp-index1 tmp-index2)
              (type (simple-array fixnum) tmp-arr1 tmp-arr2 best-arr1 best-arr2))
-    (loop for i fixnum from 0 to (1- tmp-index1) do
+    (loop for i fixnum from 0 below tmp-index1 do
       (setf (aref best-arr1 i) (aref tmp-arr1 i)))
-    (loop for i fixnum from 0 to (1- tmp-index2) do
+    (loop for i fixnum from 0 below tmp-index2 do
       (setf (aref best-arr2 i) (aref tmp-arr2 i)))
     (setf (dtree-best-index1 dtree) tmp-index1
           (dtree-best-index2 dtree) tmp-index2)))
@@ -325,7 +325,7 @@
            (type (simple-array fixnum) arr)
            (type fixnum len))
   (let ((new-arr (make-array len :element-type 'fixnum)))
-    (loop for i fixnum from 0 to (1- len) do
+    (loop for i fixnum from 0 below len do
       (setf (aref new-arr i) (aref arr i)))
     new-arr))
 
@@ -425,23 +425,27 @@
 
 ;; decision-tree prediction
 
+(defun argmax (arr)
+  (declare (optimize (speed 3) (safety 0))
+           (type (simple-array double-float) arr))
+  (let ((max most-negative-double-float)
+        (max-i 0))
+    (declare (type double-float max)
+             (type fixnum max-i))
+    (loop for i fixnum from 0 below (length arr) do
+      (when (> (aref arr i) max)
+        (setf max (aref arr i)
+              max-i i)))
+    max-i))
+
 (defun predict-dtree (dtree datamatrix datum-index)
   (declare (optimize (speed 3) (safety 0))
            (type dtree dtree)
            (type (simple-array double-float) datamatrix)
            (type fixnum datum-index))
-  (let ((max 0d0)
-        (max-class 0)
-        (dist (node-class-distribution (find-leaf (dtree-root dtree) datamatrix datum-index)))
-        (n-class (dtree-n-class dtree)))
-    (declare (type double-float max)
-             (type fixnum max-class n-class)
-             (type (simple-array double-float) dist))
-    (loop for i fixnum from 0 to (1- n-class) do
-      (when (> (aref dist i) max)
-        (setf max (aref dist i)
-              max-class i)))
-    max-class))
+  (let ((dist (node-class-distribution (find-leaf (dtree-root dtree) datamatrix datum-index))))
+    (declare (type (simple-array double-float) dist))
+    (argmax dist)))
 
 (defun calc-accuracy (n-correct len &key quiet-p)
   (let ((accuracy (* (/ n-correct len) 100.0)))
@@ -525,7 +529,7 @@
 (defun bootstrap-sample-indices (n datamatrix)
   (let ((len (array-dimension datamatrix 0))
         (arr (make-array n :element-type 'fixnum :initial-element 0)))
-    (loop for i from 0 to (1- n) do
+    (loop for i from 0 below n do
       (setf (aref arr i) (random len)))
     arr))
 
@@ -609,17 +613,17 @@
              (type (simple-array double-float) datamatrix class-count-array)
              (type fixnum datum-index n-class n-tree))
     ;; init forest-class-count-array
-    (loop for i fixnum from 0 to (1- n-class) do
+    (loop for i fixnum from 0 below n-class do
       (setf (aref class-count-array i) 0d0))
     ;; whole count
     (dolist (dtree (forest-dtree-list forest))
       (let ((dist (node-class-distribution
                    (find-leaf (dtree-root dtree) datamatrix datum-index))))
         (declare (type (simple-array double-float) dist))
-        (loop for i fixnum from 0 to (1- n-class) do
+        (loop for i fixnum from 0 below n-class do
           (incf (aref class-count-array i) (aref dist i)))))
     ;; divide by n-tree
-    (loop for i fixnum from 0 to (1- n-class) do
+    (loop for i fixnum from 0 below n-class do
       (setf (aref class-count-array i)
             (/ (aref class-count-array i) n-tree)))
     class-count-array))
@@ -629,18 +633,9 @@
            (type forest forest)
            (type (simple-array double-float) datamatrix)
            (type fixnum datum-index))
-  (let ((max 0d0)
-        (max-class 0)
-        (dist (class-distribution-forest forest datamatrix datum-index))
-        (n-class (forest-n-class forest)))
-    (declare (type double-float max)
-             (type fixnum max-class n-class)
-             (type (simple-array double-float) dist))
-    (loop for i fixnum from 0 below n-class do
-      (when (> (aref dist i) max)
-        (setf max (aref dist i)
-              max-class i)))
-    max-class))
+  (let ((dist (class-distribution-forest forest datamatrix datum-index)))
+    (declare (type (simple-array double-float) dist))
+    (argmax dist)))
 
 (defun test-forest (forest datamatrix target &key quiet-p)
   (declare (optimize (speed 3) (safety 0))
@@ -694,7 +689,7 @@
                                 :element-type 'double-float :initial-element 1d0)))
         (declare (type (simple-array fixnum) sv-index)
                  (type (simple-array double-float) sv-val))
-        (loop for i fixnum from 0 to (1- n-tree)
+        (loop for i fixnum from 0 below n-tree
               for index fixnum in leaf-index-list
               do (setf (aref sv-index i) (+ index (aref index-offset i))))
         (clol.vector:make-sparse-vector sv-index sv-val)))))
@@ -713,7 +708,7 @@
         (offset (forest-index-offset forest)))
     (setf (aref offset 0) 0)
     (loop for dtree in (forest-dtree-list forest)
-          for i from 1 to (1- (forest-n-tree forest))
+          for i from 1 below (forest-n-tree forest)
           do (setf sum (+ sum (dtree-max-leaf-index dtree)))
              (setf (aref offset i) sum))))
 
@@ -743,14 +738,14 @@
              (type (simple-array fixnum) index-offset)
              (type fixnum len n-tree))
     (let ((refine-dataset (make-array len)))
-      (loop for i from 0 to (1- len) do
+      (loop for i from 0 below len do
         (setf (aref refine-dataset i) (make-array n-tree :element-type 'fixnum)))
       (mapc/pmapc
        (lambda (dtree)
          (let* ((tree-id (dtree-id dtree))
                 (offset (aref index-offset tree-id)))
            (declare (type fixnum tree-id offset))
-           (loop for i fixnum from 0 to (1- len) do
+           (loop for i fixnum from 0 below len do
              (let ((leaf-index (node-leaf-index (find-leaf (dtree-root dtree) datamatrix i)))
                    (destination (svref refine-dataset i)))
                (declare (type fixnum leaf-index)
@@ -764,7 +759,7 @@
          (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
          (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
          (sv (clol.vector:make-sparse-vector sv-index sv-val)))
-    (loop for i from 0 to (1- (length refine-dataset)) do
+    (loop for i from 0 below (length refine-dataset) do
       (setf (clol.vector:sparse-vector-index-vector sv) (svref refine-dataset i))
       (clol:sparse-arow-update refine-learner sv
                                (if (= (aref target i) 0) -1d0 1d0)))))
@@ -776,7 +771,7 @@
          (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
          (sv (clol.vector:make-sparse-vector sv-index sv-val))
          (n-correct 0))
-    (loop for i from 0 to (1- (length refine-dataset)) do
+    (loop for i from 0 below (length refine-dataset) do
       (setf (clol.vector:sparse-vector-index-vector sv) (svref refine-dataset i))
       (when (= (aref target i)
                (if (> (clol:sparse-arow-predict refine-learner sv) 0d0) 1 0))
@@ -793,11 +788,11 @@
          (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
          (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
          (sv-vec (make-array n-class)))
-    (loop for i fixnum from 0 to (1- n-class) do
+    (loop for i fixnum from 0 below n-class do
       (setf (svref sv-vec i)
             (clol.vector:make-sparse-vector sv-index sv-val)))
     (dotimes/pdotimes (class-id n-class)
-      (loop for datum-id fixnum from 0 to (1- len) do
+      (loop for datum-id fixnum from 0 below len do
         (setf (clol.vector:sparse-vector-index-vector (svref sv-vec class-id))
               (svref refine-dataset datum-id))
         (clol:sparse-arow-update (svref learners class-id)
@@ -810,7 +805,7 @@
   (dotimes/pdotimes (class-id n-class) 
     (let ((learner (svref (clol::one-vs-rest-learners-vector refine-learner) class-id))
           (input (svref sv-vec class-id)))
-      (loop for i from 0 to (1- end-of-mini-batch) do
+      (loop for i from 0 below end-of-mini-batch do
         (setf (clol.vector:sparse-vector-index-vector input)
               (svref refine-dataset (+ (* (array-dimension activation-matrix 0) cycle) i)))
         (setf (aref activation-matrix i class-id)
@@ -821,10 +816,10 @@
 
 (defun maximize-activation/count (activation-matrix end-of-mini-batch target cycle)
   (let ((n-correct 0))
-    (loop for i from 0 to (1- end-of-mini-batch) do
+    (loop for i from 0 below end-of-mini-batch do
       (let ((max-activation most-negative-double-float)
             (max-class 0))
-        (loop for j from 0 to (1- (array-dimension activation-matrix 1)) do
+        (loop for j from 0 below (array-dimension activation-matrix 1) do
           (when (> (aref activation-matrix i j) max-activation)
             (setf max-activation (aref activation-matrix i j)
                   max-class j)))
@@ -842,13 +837,13 @@
          (sv-vec (make-array n-class))
          (n-correct 0))
     ;; init sv-vec
-    (loop for i fixnum from 0 to (1- n-class) do
+    (loop for i fixnum from 0 below n-class do
       (setf (svref sv-vec i)
             (clol.vector:make-sparse-vector sv-index sv-val)))
     (multiple-value-bind (max-cycle end-of-mini-batch)
         (floor len mini-batch-size)
       (when (> max-cycle 0)
-        (loop for cycle from 0 to (1- max-cycle) do
+        (loop for cycle from 0 below max-cycle do
           (set-activation-matrix! activation-matrix refine-learner n-class sv-vec
                                  refine-dataset cycle mini-batch-size)
           (incf n-correct
@@ -917,19 +912,19 @@
          (train-datamatrix (make-array (list train-size datum-dim)
                                        :element-type 'double-float :initial-element 0d0))
          (train-target (make-array train-size :element-type 'fixnum :initial-element 0)))
-    (loop for n from 0 to (1- n-fold) do      
+    (loop for n from 0 below n-fold do
       ;; Init train/test datamatrix/target
-      (loop for i from 0 to (1- (* n test-size)) do
+      (loop for i from 0 below (* n test-size) do
         (setf (aref train-target i) (aref target i))
-        (loop for j from 0 to (1- datum-dim) do
+        (loop for j from 0 below datum-dim do
           (setf (aref train-datamatrix i j) (aref datamatrix i j))))
-      (loop for i from (* n test-size) to (1- (* (1+ n) test-size)) do
+      (loop for i from (* n test-size) below (* (1+ n) test-size) do
         (setf (aref test-target (- i (* n test-size))) (aref target i))
-        (loop for j from 0 to (1- datum-dim) do
+        (loop for j from 0 below datum-dim do
           (setf (aref test-datamatrix (- i (* n test-size)) j) (aref datamatrix i j))))
-      (loop for i from (* (1+ n) test-size) to (1- total-size) do
+      (loop for i from (* (1+ n) test-size) below total-size do
         (setf (aref train-target (- i test-size)) (aref target i))
-        (loop for j from 0 to (1- datum-dim) do
+        (loop for j from 0 below datum-dim do
           (setf (aref train-datamatrix (- i test-size) j) (aref datamatrix i j))))
       ;; Build a random-forest and make a learner and datasets for Global refinement
       (let* ((forest (make-forest n-class train-datamatrix train-target
@@ -965,7 +960,7 @@
     ;;          (type (simple-array fixnum) index-offset)
     ;;          (type fixnum len n-tree))
     (let ((refine-dataset (make-array len)))
-      (loop for i from 0 to (1- len) do
+      (loop for i from 0 below len do
         (setf (aref refine-dataset i)
               (cons (make-array n-tree :element-type 'fixnum)
                     (make-array n-tree :element-type 'double-float))))
@@ -974,7 +969,7 @@
          (let* ((tree-id (dtree-id dtree))
                 (offset (aref index-offset tree-id)))
            ;; (declare (type fixnum tree-id offset))
-           (loop for i fixnum from 0 to (1- len) do
+           (loop for i fixnum from 0 below len do
              (let* ((leaf (find-leaf (dtree-root dtree) datamatrix i))
                     (leaf-index (node-leaf-index leaf))
                     (leaf-mean (node-regression-mean leaf))
@@ -1005,7 +1000,7 @@
             (sv-val (make-array (forest-n-tree forest) :element-type 'double-float)))
         ;; (declare (type (simple-array fixnum) sv-index)
         ;;          (type (simple-array double-float) sv-val))
-        (loop for i fixnum from 0 to (1- n-tree)
+        (loop for i fixnum from 0 below n-tree
               for index-val-pair in leaf-index-val-pair-list
               do (setf (aref sv-index i) (+ (car index-val-pair) (aref index-offset i))
                        (aref sv-val i) (cdr index-val-pair)))
@@ -1020,7 +1015,7 @@
          (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
          (sv-val (make-array n-tree :element-type 'double-float))
          (sv (clol.vector:make-sparse-vector sv-index sv-val)))
-    (loop for i from 0 to (1- (length refine-dataset)) do
+    (loop for i from 0 below (length refine-dataset) do
       (setf (clol.vector:sparse-vector-index-vector sv) (car (svref refine-dataset i))
             (clol.vector:sparse-vector-value-vector sv) (cdr (svref refine-dataset i)))
       (clol:sparse-rls-update refine-learner sv (aref target i)))))
@@ -1033,7 +1028,7 @@
            (sv-val (make-array n-tree :element-type 'double-float))
            (sv (clol.vector:make-sparse-vector sv-index sv-val))
            (sum-square-error 0d0))
-      (loop for i from 0 to (1- (length refine-dataset)) do
+      (loop for i from 0 below (length refine-dataset) do
         (setf (clol.vector:sparse-vector-index-vector sv) (car (svref refine-dataset i))
               (clol.vector:sparse-vector-value-vector sv) (cdr (svref refine-dataset i)))
         (incf sum-square-error
@@ -1051,10 +1046,10 @@
 (defun make-l2-norm-multiclass (learner)
   (let* ((dim (clol::one-vs-rest-input-dimension learner))
          (arr (make-array dim :element-type 'double-float :initial-element 0d0)))
-    (loop for i from 0 to (1- (clol::one-vs-rest-n-class learner)) do
+    (loop for i from 0 below (clol::one-vs-rest-n-class learner) do
       (let* ((sub-learner (svref (clol::one-vs-rest-learners-vector learner) i))
              (weight-vec (funcall (clol::one-vs-rest-learner-weight learner) sub-learner)))
-        (loop for j from 0 to (1- dim) do
+        (loop for j from 0 below dim do
           (setf (aref arr j) (+ (aref arr j) (square (aref weight-vec j)))))))
     arr))
 
@@ -1062,7 +1057,7 @@
   (let* ((dim (clol::sparse-arow-input-dimension learner))
          (arr (make-array dim :element-type 'double-float :initial-element 0d0))
          (weight-vec (clol::sparse-arow-weight learner)))
-    (loop for i from 0 to (1- dim) do
+    (loop for i from 0 below dim do
       (setf (aref arr i) (square (aref weight-vec i))))
     arr))
 
@@ -1121,7 +1116,7 @@
 (defun pruning! (forest learner &optional (pruning-rate 0.1) (min-depth 1))
   (let* ((leaf-parents (collect-leaf-parent-sorted forest learner))
          (pruning-size (floor (* (length leaf-parents) pruning-rate))))
-    (loop for i from 0 to (1- pruning-size)
+    (loop for i from 0 below pruning-size
           for node in leaf-parents
           do (when (>= (node-depth node) min-depth)
                (delete-children! node)))

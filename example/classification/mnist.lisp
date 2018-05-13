@@ -42,6 +42,7 @@
 
 ;; Testing with training data
 (test-dtree mnist-dtree mnist-datamatrix mnist-target)
+
 ;; Accuracy: 90.37333%, Correct: 54224, Total: 60000
 
 ;; Testing with test data
