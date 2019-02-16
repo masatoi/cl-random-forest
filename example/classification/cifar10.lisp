@@ -6,7 +6,9 @@
 
 ;; Download CIFAR-10 binary version and extract to directory.
 ;; http://www.cs.toronto.edu/~kriz/cifar.html
-(defparameter dir #P"/home/wiz/datasets/cifar-10-batches-bin/")
+(defparameter dir (asdf:system-relative-pathname :cl-random-forest "dataset/"))
+(ensure-directories-exist dir)
+(uiop:run-program (format nil "cd ~a ; [ -e cifar-10-binary.tar.gz ] || wget http://www.cs.toronto.edu/~~kriz/cifar-10-binary.tar.gz ; tar xf cifar-10-binary.tar.gz" dir))
 
 (defparameter dim 3072)
 (defparameter n-class 10)
@@ -32,9 +34,9 @@
     'done))
 
 (loop for i from 0 to 4 do
-  (load-cifar (merge-pathnames (format nil "data_batch_~A.bin" (1+ i)) dir) x y i))
+  (load-cifar (merge-pathnames (format nil "cifar-10-batches-bin/data_batch_~A.bin" (1+ i)) dir) x y i))
 
-(load-cifar (merge-pathnames "test_batch.bin" dir) x.t y.t 0)
+(load-cifar (merge-pathnames "cifar-10-batches-bin/test_batch.bin" dir) x.t y.t 0)
 
 ;;; ======================================================================
 
