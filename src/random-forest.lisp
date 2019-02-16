@@ -121,7 +121,7 @@
 (defstruct (node (:constructor %make-node)
                  (:print-object %print-node))
   sample-indices n-sample depth test-attribute test-threshold information-gain
-  parent-node left-node right-node dtree leaf-index leaf-prediction)
+  parent-node left-node right-node dtree leaf-index)
 
 (defun %print-node (obj stream)
   (format stream "#S(NODE :TEST ~A :GAIN ~A)"
@@ -220,8 +220,9 @@
                          (* pk (log pk)))))))
     (* -1d0 sum)))
 
-(defmacro square (x)
-  `(* ,x ,x))
+(declaim (inline square))
+(defun square (x)
+  (* x x))
 
 ;; score function for regression
 
