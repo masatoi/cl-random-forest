@@ -57,8 +57,23 @@
 ;;; Make Random Forest ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;; Enable/Disable parallelizaion
-(setf lparallel:*kernel* (lparallel:make-kernel 4))
+(ql:quickload :cl-cpus)
+(setf lparallel:*kernel* (lparallel:make-kernel (cl-cpus:get-number-of-processors)))
 ;; (setf lparallel:*kernel* nil)
+
+;; checking performance saturation
+
+(let (acc)
+  (loop for c to (cl-cpus:get-number-of-processors)
+     do
+       (setf lparallel:*kernel* (lparallel:make-kernel c))
+       (dotimes (i 1)
+         (sb-ext:call-with-timing
+          (lambda (&rest args) (push (print `(:cores ,c :trial ,i ,@args)) acc))
+          (lambda ()
+            (make-forest n-class x y
+                         :n-tree 1000 :bagging-ratio 0.1 :max-depth 15 :n-trial 32 :min-region-samples 5)))))
+  (print acc))
 
 ;; 21.545 seconds of real time (4 core)
 (time

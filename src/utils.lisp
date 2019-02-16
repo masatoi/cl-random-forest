@@ -30,16 +30,15 @@
        (mapc ,fn ,@lsts)))
 
 (defmacro push-ntimes (n lst &body body)
-  (let ((var (gensym)))
-    `(if lparallel:*kernel*
-         (lparallel:pdotimes (,var ,n)
-           (progn
-             ,var
-             (push (progn ,@body) ,lst)))
-         (dotimes (,var ,n)
-           (progn
-             ,var
-             (push (progn ,@body) ,lst))))))
+  (alexandria:with-gensyms (var vec)
+    (alexandria:once-only (n)
+      `(let ((,vec (make-array ,n)))
+         (if lparallel:*kernel*
+             (lparallel:pdotimes (,var ,n)
+               (setf (aref ,vec ,var) (progn ,@body)))
+             (dotimes (,var ,n)
+               (setf (aref ,vec ,var) (progn ,@body))))
+         (setf ,lst (coerce ,vec 'list))))))
 
 ;;; read
 
