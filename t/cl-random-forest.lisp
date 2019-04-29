@@ -8,7 +8,9 @@
 
 ;; NOTE: To run this test file, execute `(asdf:test-system :cl-random-forest)' in your Lisp.
 
-(defparameter *dataset-dir* (merge-pathnames #P"t/dataset/" (asdf:system-source-directory :cl-random-forest)))
+(defparameter *dataset-dir* (merge-pathnames #P"dataset/" (asdf:system-source-directory :cl-random-forest)))
+
+(ensure-directories-exist *dataset-dir*)
 
 (defun cat (&rest args)
   (apply #'concatenate 'string args))
