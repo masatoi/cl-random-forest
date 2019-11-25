@@ -547,21 +547,21 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
 2011 IEEE 11th International Conference on Data Mining (ICDM), 2011."
   (let* ((len (array-dimension target 0))
          (counters/class (make-array n-class :element-type 'fixnum :initial-element 0))
-         (indices (coerce (loop :repeat n-class
+         (indices/class (coerce (loop :repeat n-class
                              :collect (make-array len :element-type 'fixnum :initial-element -1))
                           'vector))
          (arr (make-array n :element-type 'fixnum :initial-element 0)))
     (loop for i from 0 below len do
          (let* ((class (aref target i))
                 (index/class (aref counters/class class)))
-           (setf (aref (aref indices class) index/class) i)
+           (setf (aref (aref indices/class class) index/class) i)
            (setf (aref counters/class class) (1+ index/class))))
     (loop
        for i from 0 below n
        with class = 0
        do
          (setf (aref arr i)
-               (aref (aref indices class)
+               (aref (aref indices/class class)
                      (random (aref counters/class class))))
          (setf class (mod (1+ class) n-class)))
     arr))
