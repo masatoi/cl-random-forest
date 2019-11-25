@@ -548,14 +548,16 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
   (let* ((len (array-dimension target 0))
          (counters/class (make-array n-class :element-type 'fixnum :initial-element 0))
          (indices/class (coerce (loop :repeat n-class
-                             :collect (make-array len :element-type 'fixnum :initial-element -1))
-                          'vector))
+                                   :collect (make-array len :element-type 'fixnum :initial-element -1))
+                                'vector))
          (arr (make-array n :element-type 'fixnum :initial-element 0)))
+    ;; collect indices for each class
     (loop for i from 0 below len do
          (let* ((class (aref target i))
                 (index/class (aref counters/class class)))
            (setf (aref (aref indices/class class) index/class) i)
            (setf (aref counters/class class) (1+ index/class))))
+    ;; collect the balanced bootstrap indices 
     (loop
        for i from 0 below n
        with class = 0
