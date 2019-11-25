@@ -561,10 +561,12 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
     (loop
        for i from 0 below n
        with class = 0
+       for counter = (aref counters/class class)
        do
-         (setf (aref arr i)
-               (aref (aref indices/class class)
-                     (random (aref counters/class class))))
+         (when (< 0 counter) 
+           (setf (aref arr i)
+                 (aref (aref indices/class class)
+                       (random counter))))
          (setf class (mod (1+ class) n-class)))
     arr))
 
