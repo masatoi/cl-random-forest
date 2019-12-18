@@ -5,7 +5,6 @@ addons:
   apt:
     packages:
       - libc6-i386
-      - openjdk-7-jre
 
 env:
   global:
@@ -38,4 +37,4 @@ cache:
     - $HOME/.config/common-lisp
 
 script:
-  - run-prove cl-random-forest-test.asd
+  - run-prove quri-test.asd
