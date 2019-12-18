@@ -555,7 +555,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
 (defun make-forest (n-class datamatrix target
                     &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
                       (n-trial 10) (gain-test #'entropy)
-                      (remove-sample-indices? t) (save-parent-node? nil) (balance t))
+                      (remove-sample-indices? t) (save-parent-node? nil) (balance nil))
   (let ((forest (%make-forest
                  :n-tree n-tree
                  :bagging-ratio bagging-ratio
