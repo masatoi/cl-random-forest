@@ -8,19 +8,40 @@
 
 ;; MNIST data
 ;; https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/multiclass.html#mnist
+(defparameter dir (asdf:system-relative-pathname :cl-random-forest "dataset/"))
+(ensure-directories-exist dir)
+
+(defun get-mnist-dataset ()
+  (let ((base-url "https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/multiclass"))
+    (flet ((download-file (filename)
+             (uiop:run-program
+              (format nil "cd ~A ; [ -e ~A ] || wget ~A/~A" dir filename base-url filename)))
+           (expand-file (filename)
+             (uiop:run-program (format nil "cd ~A ; [ -e ~A ] || bunzip2 ~A"
+                                       dir (subseq filename 0 (- (length filename) 4))  filename))))
+      (format t "Downloading mnist.scale.bz2~%")
+      (download-file "mnist.scale.bz2")
+      (format t "Expanding mnist.scale.bz2~%")
+      (expand-file "mnist.scale.bz2")
+      (format t "Downloading mnist.scale.t.bz2~%")
+      (download-file "mnist.scale.t.bz2")
+      (format t "Expanding mnist.scale.t.bz2~%")
+      (expand-file "mnist.scale.t.bz2"))))
+
+(get-mnist-dataset)
 
 (defparameter mnist-dim 784)
 (defparameter mnist-n-class 10)
 
 ;; Read training data
 (multiple-value-bind (datamat target)
-    (read-data "/home/wiz/datasets/mnist.scale" mnist-dim)
+    (read-data (merge-pathnames "mnist.scale" dir) mnist-dim)
   (defparameter mnist-datamatrix datamat)
   (defparameter mnist-target target))
 
 ;; Read test data
 (multiple-value-bind (datamat target)
-    (read-data "/home/wiz/datasets/mnist.scale.t" mnist-dim)
+    (read-data (merge-pathnames "mnist.scale.t" dir) mnist-dim)
   (defparameter mnist-datamatrix-test datamat)
   (defparameter mnist-target-test target))
 
