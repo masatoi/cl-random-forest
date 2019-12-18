@@ -516,10 +516,46 @@
       (setf (aref arr i) (random len)))
     arr))
 
+(defun balanced-bootstrap-sample-indices (n n-class target)
+  "Bagging classifiers induced over balanced bootstrap samples. Also known as Balanced Random Forest.
+
+This implementation counts the number of examples in each class, which might be inefficient.
+
+> In this work we provide such an explanation, and we conclude that
+> in almost all imbalanced scenarios, practitioners should bag classifiers induced over
+> balanced bootstrap samples.
+
+Wallace, Byron C., et al. ``Class imbalance, redux.''
+2011 IEEE 11th International Conference on Data Mining (ICDM), 2011."
+  (let* ((len (array-dimension target 0))
+         (counters/class (make-array n-class :element-type 'fixnum :initial-element 0))
+         (indices/class (coerce (loop :repeat n-class
+                                   :collect (make-array len :element-type 'fixnum :initial-element -1))
+                                'vector))
+         (arr (make-array n :element-type 'fixnum :initial-element 0)))
+    ;; collect indices for each class
+    (loop for i from 0 below len do
+         (let* ((class (aref target i))
+                (index/class (aref counters/class class)))
+           (setf (aref (aref indices/class class) index/class) i)
+           (setf (aref counters/class class) (1+ index/class))))
+    ;; collect the balanced bootstrap indices 
+    (loop
+       for i from 0 below n
+       with class = 0
+       for counter = (aref counters/class class)
+       do
+         (when (< 0 counter) 
+           (setf (aref arr i)
+                 (aref (aref indices/class class)
+                       (random counter))))
+         (setf class (mod (1+ class) n-class)))
+    arr))
+
 (defun make-forest (n-class datamatrix target
                     &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
                       (n-trial 10) (gain-test #'entropy)
-                      (remove-sample-indices? t) (save-parent-node? nil))
+                      (remove-sample-indices? t) (save-parent-node? nil) (balance t))
   (let ((forest (%make-forest
                  :n-tree n-tree
                  :bagging-ratio bagging-ratio
@@ -542,9 +578,14 @@
                   :gain-test gain-test
                   :remove-sample-indices? remove-sample-indices?
                   :save-parent-node? save-parent-node?
-                  :sample-indices (bootstrap-sample-indices
-                                   (floor (* (array-dimension datamatrix 0) bagging-ratio))
-                                   datamatrix)))
+                  :sample-indices (if balance
+                                      (balanced-bootstrap-sample-indices
+                                       (floor (* (array-dimension datamatrix 0) bagging-ratio))
+                                       n-class
+                                       target)
+                                      (bootstrap-sample-indices
+                                       (floor (* (array-dimension datamatrix 0) bagging-ratio))
+                                       datamatrix))))
     ;; set dtree-id
     (loop for dtree in (forest-dtree-list forest)
           for i from 0
