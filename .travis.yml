@@ -37,4 +37,4 @@ cache:
     - $HOME/.config/common-lisp
 
 script:
-  - run-prove quri-test.asd
+  - run-prove cl-random-forest-test.asd
