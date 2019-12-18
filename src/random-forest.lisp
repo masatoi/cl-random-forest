@@ -32,27 +32,24 @@
        (null (dtree-n-class dtree))))
 
 (defun %print-dtree (obj stream)
-  (if (not (rtree? obj))
-      (format stream "#S(DTREE :N-CLASS ~A :DATUM-DIM ~A :ROOT ~A)"
-              (dtree-n-class obj)
-              (dtree-datum-dim obj)
-              (dtree-root obj))
-      (format stream "#S(RTREE :DATUM-DIM ~A :ROOT ~A)"
-              (dtree-datum-dim obj)
-              (dtree-root obj))))
+  (print-unreadable-object (obj stream :type t :identity t)
+    (format stream ":N-CLASS ~A :DATUM-DIM ~A :ROOT ~A"
+            (dtree-n-class obj)
+            (dtree-datum-dim obj)
+            (dtree-root obj))))
 
 (defun make-dtree (n-class datamatrix target
                    &key (max-depth 5) (min-region-samples 1) (n-trial 10)
-                     (gain-test #'entropy)
-                     (remove-sample-indices? t)
-                     (save-parent-node? nil)
-                     sample-indices)
+                        (gain-test #'entropy)
+                        (remove-sample-indices? t)
+                        (save-parent-node? nil)
+                        sample-indices)
   (let* ((len (if sample-indices
                   (length sample-indices)
                   (array-dimension datamatrix 0)))
          (dtree (%make-dtree
                  :n-class n-class
-                 :class-count-array (make-array n-class :element-type 'double-float)
+                 :class-count-array (and n-class (make-array n-class :element-type 'double-float))
                  :datum-dim (array-dimension datamatrix 1)
                  :datamatrix datamatrix
                  :target target
@@ -76,45 +73,29 @@
 
 (defun make-rtree (datamatrix target
                    &key (max-depth 5) (min-region-samples 1) (n-trial 10)
-                     (gain-test #'variance)
-                     (remove-sample-indices? t)
-                     (save-parent-node? nil)
-                     sample-indices)
-  (let* ((len (if sample-indices
-                  (length sample-indices)
-                  (array-dimension datamatrix 0)))
-         (rtree (%make-dtree
-                 :datum-dim (array-dimension datamatrix 1)
-                 :datamatrix datamatrix
-                 :target target
-                 :max-depth max-depth :min-region-samples min-region-samples
-                 :n-trial n-trial
-                 :gain-test gain-test
-                 :remove-sample-indices? remove-sample-indices?
-                 :save-parent-node? save-parent-node?
-                 :tmp-arr1 (make-array len :element-type 'fixnum :initial-element 0)
-                 :tmp-index1 0
-                 :tmp-arr2 (make-array len :element-type 'fixnum :initial-element 0)
-                 :tmp-index2 0
-                 :best-arr1 (make-array len :element-type 'fixnum :initial-element 0)
-                 :best-index1 0
-                 :best-arr2 (make-array len :element-type 'fixnum :initial-element 0)
-                 :best-index2 0)))
-    (setf (dtree-root rtree) (make-root-node rtree :sample-indices sample-indices))
-    (split-node! (dtree-root rtree))
-    (clean-dtree! rtree)
-    rtree))
+                        (gain-test #'variance)
+                        (remove-sample-indices? t)
+                        (save-parent-node? nil)
+                        sample-indices)
+  (make-dtree nil datamatrix target
+              :max-depth max-depth
+              :min-region-samples min-region-samples
+              :n-trial n-trial
+              :gain-test gain-test
+              :remove-sample-indices? remove-sample-indices?
+              :save-parent-node? save-parent-node?
+              :sample-indices sample-indices))
 
 (defun clean-dtree! (dtree)
-  (setf (dtree-datamatrix dtree) nil
-        (dtree-gain-test dtree) nil
-        (dtree-tmp-arr1 dtree) nil
-        (dtree-tmp-index1 dtree) nil
-        (dtree-tmp-arr2 dtree) nil
-        (dtree-tmp-index2 dtree) nil
-        (dtree-best-arr1 dtree) nil
+  (setf (dtree-datamatrix dtree)  nil
+        (dtree-gain-test dtree)   nil
+        (dtree-tmp-arr1 dtree)    nil
+        (dtree-tmp-index1 dtree)  nil
+        (dtree-tmp-arr2 dtree)    nil
+        (dtree-tmp-index2 dtree)  nil
+        (dtree-best-arr1 dtree)   nil
         (dtree-best-index1 dtree) nil
-        (dtree-best-arr2 dtree) nil
+        (dtree-best-arr2 dtree)   nil
         (dtree-best-index2 dtree) nil)
   dtree)
 
@@ -124,9 +105,10 @@
   parent-node left-node right-node dtree leaf-index)
 
 (defun %print-node (obj stream)
-  (format stream "#S(NODE :TEST ~A :GAIN ~A)"
-          (list (node-test-attribute obj) (node-test-threshold obj))
-          (node-information-gain obj)))
+  (print-unreadable-object (obj stream :type t :identity t)
+    (format stream ":TEST ~A :GAIN ~A"
+            (list (node-test-attribute obj) (node-test-threshold obj))
+            (node-information-gain obj))))
 
 (defun make-root-node (dtree &key sample-indices)
   (let* ((len (array-dimension (dtree-datamatrix dtree) 0))
@@ -338,7 +320,7 @@
          (right-node (make-node nil node)))
     (setf (node-left-node node) left-node
           (node-right-node node) right-node)
-    (loop repeat n-trial do
+    (dotimes (_ n-trial)
       (multiple-value-bind (attribute threshold)
           (make-random-test node)
         (multiple-value-bind (left-len right-len)
