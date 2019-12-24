@@ -554,8 +554,8 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
 
 (defun make-forest (n-class datamatrix target
                     &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
-                      (n-trial 10) (gain-test #'entropy)
-                      (remove-sample-indices? t) (save-parent-node? nil) (balance nil))
+                         (n-trial 10) (gain-test #'entropy)
+                         (remove-sample-indices? t) (save-parent-node? nil) (balance nil))
   (let ((forest (%make-forest
                  :n-tree n-tree
                  :bagging-ratio bagging-ratio
@@ -571,21 +571,25 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
                  :index-offset (make-array n-tree :element-type 'fixnum :initial-element 0))))
     ;; make dtree list
     (push-ntimes n-tree (forest-dtree-list forest)
-      (make-dtree n-class datamatrix target
-                  :max-depth max-depth
-                  :min-region-samples min-region-samples
-                  :n-trial n-trial
-                  :gain-test gain-test
-                  :remove-sample-indices? remove-sample-indices?
-                  :save-parent-node? save-parent-node?
-                  :sample-indices (if balance
-                                      (balanced-bootstrap-sample-indices
-                                       (floor (* (array-dimension datamatrix 0) bagging-ratio))
-                                       n-class
-                                       target)
-                                      (bootstrap-sample-indices
-                                       (floor (* (array-dimension datamatrix 0) bagging-ratio))
-                                       datamatrix))))
+      (prog1
+          (make-dtree n-class datamatrix target
+                      :max-depth max-depth
+                      :min-region-samples min-region-samples
+                      :n-trial n-trial
+                      :gain-test gain-test
+                      :remove-sample-indices? remove-sample-indices?
+                      :save-parent-node? save-parent-node?
+                      :sample-indices (if balance
+                                          (balanced-bootstrap-sample-indices
+                                           (floor (* (array-dimension datamatrix 0) bagging-ratio))
+                                           n-class
+                                           target)
+                                          (bootstrap-sample-indices
+                                           (floor (* (array-dimension datamatrix 0) bagging-ratio))
+                                           datamatrix)))
+        (format t ".")
+        (force-output)))
+    (terpri)
     ;; set dtree-id
     (loop for dtree in (forest-dtree-list forest)
           for i from 0
@@ -611,16 +615,20 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
                  :index-offset (make-array n-tree :element-type 'fixnum :initial-element 0))))
     ;; make dtree list
     (push-ntimes n-tree (forest-dtree-list forest)
-      (make-rtree datamatrix target
-                  :max-depth max-depth
-                  :min-region-samples min-region-samples
-                  :n-trial n-trial
-                  :gain-test gain-test
-                  :remove-sample-indices? remove-sample-indices?
-                  :save-parent-node? save-parent-node? 
-                  :sample-indices (bootstrap-sample-indices
-                                   (floor (* (array-dimension datamatrix 0) bagging-ratio))
-                                   datamatrix)))
+      (prog1
+          (make-rtree datamatrix target
+                      :max-depth max-depth
+                      :min-region-samples min-region-samples
+                      :n-trial n-trial
+                      :gain-test gain-test
+                      :remove-sample-indices? remove-sample-indices?
+                      :save-parent-node? save-parent-node?
+                      :sample-indices (bootstrap-sample-indices
+                                       (floor (* (array-dimension datamatrix 0) bagging-ratio))
+                                       datamatrix))
+        (format t ".")
+        (force-output)))
+    (terpri)
     ;; set dtree-id
     (loop for dtree in (forest-dtree-list forest)
           for i from 0
