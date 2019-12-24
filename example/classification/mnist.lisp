@@ -9,9 +9,15 @@
 ;; MNIST data
 ;; https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/multiclass.html#mnist
 (defparameter dir (asdf:system-relative-pathname :cl-random-forest "dataset/"))
-(ensure-directories-exist dir)
+(defparameter mnist-dim 784)
+(defparameter mnist-n-class 10)
+(defvar mnist-datamatrix)
+(defvar mnist-target)
+(defvar mnist-datamatrix-test)
+(defvar mnist-target-test)
 
 (defun get-mnist-dataset ()
+  (ensure-directories-exist dir)
   (let ((base-url "https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/multiclass"))
     (flet ((download-file (filename)
              (uiop:run-program
@@ -28,29 +34,27 @@
       (format t "Expanding mnist.scale.t.bz2~%")
       (expand-file "mnist.scale.t.bz2"))))
 
+(defun read-mnist-dataset ()
+  (format t "Reading training data~%")
+  (multiple-value-bind (datamat target)
+      (read-data (merge-pathnames "mnist.scale" dir) mnist-dim)
+    (setf mnist-datamatrix datamat
+          mnist-target target))
+
+  (format t "Reading test data~%")
+  (multiple-value-bind (datamat target)
+      (read-data (merge-pathnames "mnist.scale.t" dir) mnist-dim)
+    (setf mnist-datamatrix-test datamat
+          mnist-target-test target))
+
+  ;; Add 1 to labels because the labels of this dataset begin from 0
+  (loop for i from 0 below (length mnist-target) do
+           (incf (aref mnist-target i)))
+  (loop for i from 0 below (length mnist-target-test) do
+           (incf (aref mnist-target-test i))))
+
 (get-mnist-dataset)
-
-(defparameter mnist-dim 784)
-(defparameter mnist-n-class 10)
-
-;; Read training data
-(multiple-value-bind (datamat target)
-    (read-data (merge-pathnames "mnist.scale" dir) mnist-dim)
-  (defparameter mnist-datamatrix datamat)
-  (defparameter mnist-target target))
-
-;; Read test data
-(multiple-value-bind (datamat target)
-    (read-data (merge-pathnames "mnist.scale.t" dir) mnist-dim)
-  (defparameter mnist-datamatrix-test datamat)
-  (defparameter mnist-target-test target))
-
-;; Add 1 to labels because the labels of this dataset begin from 0
-(loop for i from 0 below (length mnist-target) do
-  (incf (aref mnist-target i)))
-
-(loop for i from 0 below (length mnist-target-test) do
-  (incf (aref mnist-target-test i)))
+(read-mnist-dataset)
 
 ;;; Make Decision Tree ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
