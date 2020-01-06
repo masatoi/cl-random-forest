@@ -496,10 +496,11 @@
 (defstruct (forest (:constructor %make-forest)
                    (:print-object %print-forest))
   n-tree bagging-ratio datamatrix target dtree-list
-  n-class class-count-array ; for classification
+  ;; for classification
+  n-class class-count-array
   datum-dim max-depth min-region-samples n-trial gain-test
-  index-offset ; for global refinement
-  )
+  ;; for global refinement
+  n-leaf index-offset)
 
 (defun %print-forest (obj stream)
   (if (forest-n-class obj)
@@ -596,6 +597,9 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
           do (setf (dtree-id dtree) i))
     ;; set leaf-id
     (set-leaf-index-forest! forest)
+    (setf (forest-n-leaf forest)
+          (apply #'+ (mapcar #'dtree-max-leaf-index
+                             (forest-dtree-list forest))))
     forest))
 
 (defun make-regression-forest (datamatrix target
@@ -635,6 +639,9 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
           do (setf (dtree-id dtree) i))
     ;; set leaf-id
     (set-leaf-index-forest! forest)
+    (setf (forest-n-leaf forest)
+          (apply #'+ (mapcar #'dtree-max-leaf-index
+                             (forest-dtree-list forest))))
     forest))
 
 (defun class-distribution-forest (forest datamatrix datum-index)
@@ -779,10 +786,10 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
            (declare (type fixnum tree-id offset))
            (loop for i fixnum from 0 below len do
              (let ((leaf-index (node-leaf-index (find-leaf (dtree-root dtree) datamatrix i)))
-                   (destination (svref refine-dataset i)))
+                   (refine-datum (svref refine-dataset i)))
                (declare (type fixnum leaf-index)
-                        (type (simple-array fixnum) destination))
-               (setf (aref destination tree-id) (+ leaf-index offset))))))
+                        (type (simple-array fixnum) refine-datum))
+               (setf (aref refine-datum tree-id) (+ leaf-index offset))))))
        (forest-dtree-list forest))
       refine-dataset)))
 
@@ -1005,12 +1012,12 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
              (let* ((leaf (find-leaf (dtree-root dtree) datamatrix i))
                     (leaf-index (node-leaf-index leaf))
                     (leaf-mean (node-regression-mean leaf))
-                    (destination-index (car (svref refine-dataset i)))
-                    (destination-value (cdr (svref refine-dataset i))))
+                    (refine-datum-index (car (svref refine-dataset i)))
+                    (refine-datum-value (cdr (svref refine-dataset i))))
                ;; (declare (type fixnum leaf-index)
-               ;;          (type (simple-array fixnum) destination))
-               (setf (aref destination-index tree-id) (+ leaf-index offset))
-               (setf (aref destination-value tree-id) leaf-mean)))))
+               ;;          (type (simple-array fixnum) refine-datum))
+               (setf (aref refine-datum-index tree-id) (+ leaf-index offset))
+               (setf (aref refine-datum-value tree-id) leaf-mean)))))
        (forest-dtree-list forest))
       refine-dataset)))
 
