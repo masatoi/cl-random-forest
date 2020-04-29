@@ -128,7 +128,7 @@
 ;; Make a prediction
 (predict-refine-learner mnist-forest mnist-refine-learner mnist-datamatrix-test 0)
 
-;;; Global Prunning of Random Forest ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Global Pruning of Random Forest ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (length (collect-leaf-parent mnist-forest)) ; => 98008
 (pruning! mnist-forest mnist-refine-learner 0.1) ; 0.328 seconds

@@ -312,8 +312,9 @@
       (setf (aref new-arr i) (aref arr i)))
     new-arr))
 
-(defun set-best-children! (n-trial node)
+(defun set-best-children! (node)
   (let* ((dtree (node-dtree node))
+         (n-trial (dtree-n-trial dtree))
          (gain-test (dtree-gain-test dtree))
          (max-children-gain most-negative-double-float)
          (left-node (make-node nil node))
@@ -367,7 +368,7 @@
 
 (defun split-node! (node)
   (when (and node (not (stop-split? node)))
-    (set-best-children! (dtree-n-trial (node-dtree node)) node)
+    (set-best-children! node)
     (split-node! (node-left-node node))
     (split-node! (node-right-node node))))
 
@@ -789,8 +790,11 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
                    (refine-datum (svref refine-dataset i)))
                (declare (type fixnum leaf-index)
                         (type (simple-array fixnum) refine-datum))
-               (setf (aref refine-datum tree-id) (+ leaf-index offset))))))
+               (setf (aref refine-datum tree-id) (+ leaf-index offset)))))
+         (format t ".")
+         (force-output))
        (forest-dtree-list forest))
+      (terpri)
       refine-dataset)))
 
 (defun train-refine-learner-binary (refine-learner refine-dataset target)
@@ -924,6 +928,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
               (cl-online-learning::one-vs-rest (clol::copy-one-vs-rest refine-learner))))
       (train-refine-learner refine-learner train-dataset train-target)
       (let ((accuracy (test-refine-learner refine-learner test-dataset test-target :quiet-p t)))
+        (format t "Accuracy: ~A~%" accuracy)
         (if (> accuracy max-accuracy)
             (setf max-accuracy accuracy)
             (return))))
