@@ -44,6 +44,14 @@
                         (remove-sample-indices? t)
                         (save-parent-node? nil)
                         sample-indices)
+  (check-type n-class alexandria:positive-integer)
+  (check-type datamatrix (simple-array double-float))
+  (check-type target (simple-array fixnum))
+  (check-type max-depth alexandria:positive-integer)
+  (check-type min-region-samples alexandria:positive-integer)
+  (check-type n-trial alexandria:positive-integer)
+  (assert (member gain-test (list #'entropy #'gini)))
+
   (let* ((len (if sample-indices
                   (length sample-indices)
                   (array-dimension datamatrix 0)))
