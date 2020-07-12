@@ -1,7 +1,8 @@
 * cl-random-forest
 
 [[http://quickdocs.org/cl-random-forest/][http://quickdocs.org/badge/cl-random-forest.svg]]
-[[https://travis-ci.org/masatoi/cl-random-forest][https://travis-ci.org/masatoi/cl-random-forest.svg?branch=master]]
+[[https://github.com/masatoi/cl-random-forest/actions?query=workflow%3ACI][https://github.com/masatoi/cl-random-forest/workflows/CI/badge.svg]]
+
 
 Cl-random-forest is a implementation of Random Forest for multiclass classification and univariate regression written in Common Lisp. It also includes a implementation of Global Refinement of Random Forest (Ren, Cao, Wei and Sun. "Global Refinement of Random Forest" CVPR2015). This refinement makes faster and more accurate than standard Random Forest.
 
