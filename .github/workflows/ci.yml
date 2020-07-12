@@ -1,0 +1,26 @@
+name: CI
+
+on: [push]
+
+jobs:
+  test:
+    name: ${{ matrix.lisp }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        lisp: [sbcl-bin, ccl-bin]
+        os: [ubuntu-latest, macOS-latest]
+
+    steps:
+      - uses: actions/checkout@v1
+      - name: Install Roswell
+        env:
+          LISP: ${{ matrix.lisp }}
+        run: |
+          curl -L https://raw.githubusercontent.com/roswell/roswell/master/scripts/install-for-ci.sh | sh
+      - name: Install Prove and dependencies
+        run: ros install prove masatoi/cl-libsvm-format masatoi/cl-online-learning
+      - name: Run tests
+        run: |
+          PATH="~/.roswell/bin:$PATH"
+          run-prove cl-random-forest-test.asd
