@@ -19,7 +19,7 @@ jobs:
         run: |
           curl -L https://raw.githubusercontent.com/roswell/roswell/master/scripts/install-for-ci.sh | sh
       - name: Install Prove and dependencies
-        run: ros install prove lparallel masatoi/cl-libsvm-format masatoi/cl-online-learning
+        run: ros install prove lparallel trivial-garbage masatoi/cl-libsvm-format masatoi/cl-online-learning
       - name: Run tests
         run: |
           PATH="~/.roswell/bin:$PATH"
