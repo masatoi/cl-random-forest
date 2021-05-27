@@ -46,7 +46,7 @@
   (let* ((len (length dataset))
          (data-dimension (length (cdar dataset)))
          (target (make-array len :element-type 'fixnum))
-         (datamatrix (make-array (list len data-dimension) :element-type 'double-float)))
+         (datamatrix (make-array (list len data-dimension) :element-type 'single-float)))
     (loop for i from 0 below len
           for datum in dataset
           do (setf (aref target i) (car datum))
@@ -57,8 +57,8 @@
 (defun clol-dataset->datamatrix/target-regression (dataset)
   (let* ((len (length dataset))
          (data-dimension (length (cdar dataset)))
-         (target (make-array len :element-type 'double-float))
-         (datamatrix (make-array (list len data-dimension) :element-type 'double-float)))
+         (target (make-array len :element-type 'single-float))
+         (datamatrix (make-array (list len data-dimension) :element-type 'single-float)))
     (loop for i from 0 below len
           for datum in dataset
           do (setf (aref target i) (car datum))
@@ -87,14 +87,14 @@
            (len (length data-list))
            (target (make-array len :element-type 'fixnum :initial-element 0))
            (datamatrix (make-array (list len dim)
-                                   :element-type 'double-float
-                                   :initial-element 0d0)))
+                                   :element-type 'single-float
+                                   :initial-element 0.0)))
       (loop for i from 0
             for datum in data-list
             do
                (setf (aref target i) (1- (car datum)))
                (do-index-value-list (j v (cdr datum))
-                 (setf (aref datamatrix i (1- j)) (coerce v 'double-float))))
+                 (setf (aref datamatrix i (1- j)) (coerce v 'single-float))))
       (values datamatrix target))))
 
 (defun read-data-regression (data-path data-dimension)
@@ -102,16 +102,16 @@
       (svmformat:parse-file data-path)
     (let* ((dim (if data-dimension data-dimension dim))
            (len (length data-list))
-           (target (make-array len :element-type 'double-float :initial-element 0d0))
+           (target (make-array len :element-type 'single-float :initial-element 0.0))
            (datamatrix (make-array (list len dim)
-                                   :element-type 'double-float
-                                   :initial-element 0d0)))
+                                   :element-type 'single-float
+                                   :initial-element 0.0)))
       (loop for i from 0
             for datum in data-list
             do
-               (setf (aref target i) (coerce (car datum) 'double-float))
+               (setf (aref target i) (coerce (car datum) 'single-float))
                (do-index-value-list (j v (cdr datum))
-                 (setf (aref datamatrix i (1- j)) (coerce v 'double-float))))
+                 (setf (aref datamatrix i (1- j)) (coerce v 'single-float))))
       (values datamatrix target))))
 
 ;;; write for R

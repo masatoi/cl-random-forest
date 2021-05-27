@@ -45,7 +45,7 @@
                         (save-parent-node? nil)
                         sample-indices)
   (check-type n-class alexandria:positive-integer)
-  (check-type datamatrix (simple-array double-float))
+  (check-type datamatrix (simple-array single-float))
   (check-type target (simple-array fixnum))
   (check-type max-depth alexandria:positive-integer)
   (check-type min-region-samples alexandria:positive-integer)
@@ -57,7 +57,7 @@
                   (array-dimension datamatrix 0)))
          (dtree (%make-dtree
                  :n-class n-class
-                 :class-count-array (and n-class (make-array n-class :element-type 'double-float))
+                 :class-count-array (and n-class (make-array n-class :element-type 'single-float))
                  :datum-dim (array-dimension datamatrix 1)
                  :datamatrix datamatrix
                  :target target
@@ -125,7 +125,7 @@
                sample-indices
                (make-array len :element-type 'fixnum :initial-contents (alexandria:iota len)))))
     (%make-node
-     :information-gain 1d0
+     :information-gain 1.0
      :sample-indices sample-indices
      :n-sample len
      :depth 0
@@ -147,21 +147,21 @@
         (target (dtree-target dtree)))
     (declare (type fixnum n-class)
              (type (simple-array fixnum) target)
-             (type (simple-array double-float) class-count-array))
+             (type (simple-array single-float) class-count-array))
     ;; init
     (loop for i fixnum from 0 below n-class do
-      (setf (aref class-count-array i) 0d0))
+      (setf (aref class-count-array i) 0.0))
     ;; count
     (loop for i fixnum from 0 below terminate-index do
       (let* ((datum-index (aref sample-indices i))
              (class-label (aref target datum-index)))
-        (incf (aref class-count-array class-label) 1d0)))
+        (incf (aref class-count-array class-label) 1.0)))
     ;; divide by sum
-    (let ((sum (loop for c double-float across class-count-array summing c double-float)))
-      (declare (type double-float sum))
+    (let ((sum (loop for c single-float across class-count-array summing c single-float)))
+      (declare (type single-float sum))
       (loop for i fixnum from 0 below n-class do
-        (if (= sum 0d0)
-            (setf (aref class-count-array i) (/ 1d0 n-class))
+        (if (= sum 0.0)
+            (setf (aref class-count-array i) (/ 1.0 n-class))
             (setf (aref class-count-array i) (/ (aref class-count-array i) sum)))))
     class-count-array))
 
@@ -176,19 +176,19 @@
            (type fixnum terminate-index)
            (type dtree dtree))
   (let ((dist (class-distribution sample-indices terminate-index dtree))
-        (sum 0d0)
+        (sum 0.0)
         (n-class (dtree-n-class dtree)))
-    (declare (type (simple-array double-float) dist)
+    (declare (type (simple-array single-float) dist)
              (type fixnum n-class)
-             (type double-float sum))
+             (type single-float sum))
     (loop for i fixnum from 0 below n-class do
       (let ((pk (aref dist i)))
-        (declare (type (double-float 0d0) pk))
+        (declare (type (single-float 0.0) pk))
         (setf sum (+ sum
-                     (if (= pk 0d0)
-                         0d0
-                         (* pk (- 1d0 pk)))))))
-    (* -1d0 sum)))
+                     (if (= pk 0.0)
+                         0.0
+                         (* pk (- 1.0 pk)))))))
+    (* -1.0 sum)))
 
 (defun entropy (sample-indices terminate-index dtree)
   (declare (optimize (speed 3) (safety 0))
@@ -196,19 +196,19 @@
            (type fixnum terminate-index)
            (type dtree dtree))
   (let ((dist (class-distribution sample-indices terminate-index dtree))
-        (sum 0d0)
+        (sum 0.0)
         (n-class (dtree-n-class dtree)))
-    (declare (type (simple-array double-float) dist)
+    (declare (type (simple-array single-float) dist)
              (type fixnum n-class)
-             (type double-float sum))
+             (type single-float sum))
     (loop for i fixnum from 0 below n-class do
       (let ((pk (aref dist i)))
-        (declare (type (double-float 0d0) pk))
+        (declare (type (single-float 0.0) pk))
         (setf sum (+ sum
-                     (if (= pk 0d0)
-                         0d0
+                     (if (= pk 0.0)
+                         0.0
                          (* pk (log pk)))))))
-    (* -1d0 sum)))
+    (* -1.0 sum)))
 
 (declaim (inline square))
 (defun square (x)
@@ -222,19 +222,19 @@
            (type fixnum terminate-index)
            (type dtree rtree))
   (if (zerop terminate-index)
-      0d0
-      (let ((len (* terminate-index 1.0d0))
+      0.0
+      (let ((len (* terminate-index 1.0.0))
             (target (dtree-target rtree))
-            (sum 0d0))
-        (declare (type (simple-array double-float) target)
-                 (type double-float sum len))
+            (sum 0.0))
+        (declare (type (simple-array single-float) target)
+                 (type single-float sum len))
         (let ((ave (progn
                      (loop for i fixnum from 0 below terminate-index do
                        (incf sum (aref target (aref sample-indices i))))
                      (/ sum len))))
-          (declare (type double-float ave))
-          (let ((sum-of-squares 0d0))
-            (declare (type double-float sum-of-squares))
+          (declare (type single-float ave))
+          (let ((sum-of-squares 0.0))
+            (declare (type single-float sum-of-squares))
             (loop for i fixnum from 0 below terminate-index do
               (incf sum-of-squares
                     (square (- (aref target (aref sample-indices i))
@@ -244,14 +244,14 @@
 (defun region-min/max (sample-indices datamatrix attribute)
   (declare (optimize (speed 3) (safety 0))
            (type (simple-array fixnum) sample-indices)
-           (type (simple-array double-float) datamatrix)
+           (type (simple-array single-float) datamatrix)
            (type fixnum attribute))
   (let ((min (aref datamatrix (aref sample-indices 0) attribute))
         (max (aref datamatrix (aref sample-indices 0) attribute)))
-    (declare (type double-float min max))
+    (declare (type single-float min max))
     (loop for index fixnum across sample-indices do
       (let ((elem (aref datamatrix index attribute)))
-        (declare (type double-float elem))
+        (declare (type single-float elem))
         (cond ((< max elem) (setf max elem))
               ((> min elem) (setf min elem)))))
     (values min max)))
@@ -267,21 +267,21 @@
          (sample-indices (node-sample-indices node)))
     (declare (optimize (speed 3) (safety 0))
              (type (simple-array fixnum) sample-indices)
-             (type (simple-array double-float) datamatrix)
+             (type (simple-array single-float) datamatrix)
              (type fixnum attribute))
     (multiple-value-bind (min max)
         (region-min/max sample-indices datamatrix attribute)
-      (declare (type double-float min max))
+      (declare (type single-float min max))
       (let ((threshold (if (= min max) min (random-uniform min max))))
-        (declare (type double-float threshold))
+        (declare (type single-float threshold))
         (values attribute threshold)))))
 
 (defun split-sample-indices (sample-indices true-array false-array attribute threshold datamatrix)
   (declare (optimize (speed 3) (safety 0))
            (type (simple-array fixnum) sample-indices true-array false-array)
            (type fixnum attribute)
-           (type double-float threshold)
-           (type (simple-array double-float) datamatrix))
+           (type single-float threshold)
+           (type (simple-array single-float) datamatrix))
   (let ((true-len 0)
         (false-len 0))
     (declare (type fixnum true-len false-len))
@@ -324,7 +324,7 @@
   (let* ((dtree (node-dtree node))
          (n-trial (dtree-n-trial dtree))
          (gain-test (dtree-gain-test dtree))
-         (max-children-gain most-negative-double-float)
+         (max-children-gain most-negative-single-float)
          (left-node (make-node nil node))
          (right-node (make-node nil node)))
     (setf (node-left-node node) left-node
@@ -343,10 +343,10 @@
                  (parent-size (length (node-sample-indices node)))
                  (children-gain
                    (if (not (rtree? dtree)) ; classification
-                       (+ (* -1d0 (/ left-len parent-size)  left-gain)
-                          (* -1d0 (/ right-len parent-size) right-gain))
+                       (+ (* -1.0 (/ left-len parent-size)  left-gain)
+                          (* -1.0 (/ right-len parent-size) right-gain))
                        ;; regression
-                       (+ (* -1d0 left-gain) (* -1d0 right-gain)))))
+                       (+ (* -1.0 left-gain) (* -1.0 right-gain)))))
             (when (< max-children-gain children-gain)
               (copy-tmp->best! dtree)
               (setf max-children-gain children-gain
@@ -368,7 +368,7 @@
     node))
 
 (defun stop-split? (node)
-  (or (= (node-information-gain node) 0d0)
+  (or (= (node-information-gain node) 0.0)
       (<= (length (node-sample-indices node))
           (dtree-min-region-samples (node-dtree node)))
       (>= (node-depth node)
@@ -404,13 +404,13 @@
 (defun find-leaf (node datamatrix datum-index)
   (declare (optimize (speed 3) (safety 0))
            (type fixnum datum-index)
-           (type (simple-array double-float) datamatrix))
+           (type (simple-array single-float) datamatrix))
   (cond ((null node) nil)
         ((null (node-test-attribute node)) node)
         (t (let ((attribute (node-test-attribute node))
                  (threshold (node-test-threshold node)))
              (declare (type fixnum attribute)
-                      (type double-float threshold))
+                      (type single-float threshold))
              (if (>= (aref datamatrix datum-index attribute) threshold)
                  (find-leaf (node-left-node node) datamatrix datum-index)
                  (find-leaf (node-right-node node) datamatrix datum-index))))))
@@ -419,10 +419,10 @@
 
 (defun argmax (arr)
   (declare (optimize (speed 3) (safety 0))
-           (type (simple-array double-float) arr))
-  (let ((max most-negative-double-float)
+           (type (simple-array single-float) arr))
+  (let ((max most-negative-single-float)
         (max-i 0))
-    (declare (type double-float max)
+    (declare (type single-float max)
              (type fixnum max-i))
     (loop for i fixnum from 0 below (length arr) do
       (when (> (aref arr i) max)
@@ -433,10 +433,10 @@
 (defun predict-dtree (dtree datamatrix datum-index)
   (declare (optimize (speed 3) (safety 0))
            (type dtree dtree)
-           (type (simple-array double-float) datamatrix)
+           (type (simple-array single-float) datamatrix)
            (type fixnum datum-index))
   (let ((dist (node-class-distribution (find-leaf (dtree-root dtree) datamatrix datum-index))))
-    (declare (type (simple-array double-float) dist))
+    (declare (type (simple-array single-float) dist))
     (argmax dist)))
 
 (defun calc-accuracy (n-correct len &key quiet-p)
@@ -448,7 +448,7 @@
 (defun test-dtree (dtree datamatrix target &key quiet-p)
   (declare (optimize (speed 3) (safety 0))
            (type dtree dtree)
-           (type (simple-array double-float) datamatrix)
+           (type (simple-array single-float) datamatrix)
            (type (simple-array fixnum (*)) target))
   (let ((n-correct 0)
         (len (length target)))
@@ -467,13 +467,13 @@
   (let ((rtree (node-dtree node)))
     (declare (type dtree rtree))
     (let ((target (dtree-target rtree))
-          (pred 0d0)
+          (pred 0.0)
           (sample-indices (node-sample-indices node)))
-      (declare (type (simple-array double-float) target)
-               (type double-float pred)
+      (declare (type (simple-array single-float) target)
+               (type single-float pred)
                (type (simple-array fixnum) sample-indices))
-      (let ((len (* (length sample-indices) 1d0)))
-        (declare (type double-float len))
+      (let ((len (* (length sample-indices) 1.0)))
+        (declare (type single-float len))
         (if (zerop len)
             pred
             (progn
@@ -487,10 +487,10 @@
 (defun test-rtree (rtree datamatrix target &key quiet-p)
   (declare (optimize (speed 3) (safety 0))
            (type dtree rtree)
-           (type (simple-array double-float) datamatrix target))
-  (let ((sum-square-error 0d0)
+           (type (simple-array single-float) datamatrix target))
+  (let ((sum-square-error 0.0)
         (n-data (array-dimension datamatrix 0)))
-    (declare (type double-float sum-square-error)
+    (declare (type single-float sum-square-error)
              (type fixnum n-data))
     (loop for i fixnum from 0 below n-data do
       (incf sum-square-error (square (- (predict-rtree rtree datamatrix i)
@@ -572,7 +572,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
                  :datamatrix datamatrix
                  :target target
                  :n-class n-class
-                 :class-count-array (make-array n-class :element-type 'double-float)
+                 :class-count-array (make-array n-class :element-type 'single-float)
                  :datum-dim (array-dimension datamatrix 1)
                  :max-depth max-depth
                  :min-region-samples min-region-samples
@@ -658,16 +658,16 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
         (n-tree (forest-n-tree forest))
         (class-count-array (forest-class-count-array forest)))
     (declare (optimize (speed 3) (safety 0))
-             (type (simple-array double-float) datamatrix class-count-array)
+             (type (simple-array single-float) datamatrix class-count-array)
              (type fixnum datum-index n-class n-tree))
     ;; init forest-class-count-array
     (loop for i fixnum from 0 below n-class do
-      (setf (aref class-count-array i) 0d0))
+      (setf (aref class-count-array i) 0.0))
     ;; whole count
     (dolist (dtree (forest-dtree-list forest))
       (let ((dist (node-class-distribution
                    (find-leaf (dtree-root dtree) datamatrix datum-index))))
-        (declare (type (simple-array double-float) dist))
+        (declare (type (simple-array single-float) dist))
         (loop for i fixnum from 0 below n-class do
           (incf (aref class-count-array i) (aref dist i)))))
     ;; divide by n-tree
@@ -679,16 +679,16 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
 (defun predict-forest (forest datamatrix datum-index)
   (declare (optimize (speed 3) (safety 0))
            (type forest forest)
-           (type (simple-array double-float) datamatrix)
+           (type (simple-array single-float) datamatrix)
            (type fixnum datum-index))
   (let ((dist (class-distribution-forest forest datamatrix datum-index)))
-    (declare (type (simple-array double-float) dist))
+    (declare (type (simple-array single-float) dist))
     (argmax dist)))
 
 (defun test-forest (forest datamatrix target &key quiet-p)
   (declare (optimize (speed 3) (safety 0))
            (type forest forest)
-           (type (simple-array double-float) datamatrix)
+           (type (simple-array single-float) datamatrix)
            (type (simple-array fixnum) target))
   (let ((n-correct 0)
         (len (length target)))
@@ -707,7 +707,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
        (forest-n-tree forest)))
 
 (defun test-regression-forest (forest datamatrix target &key quiet-p)
-  (let ((sum-square-error 0d0)
+  (let ((sum-square-error 0.0)
         (n-data (array-dimension datamatrix 0)))
     (loop for i fixnum from 0 below n-data do
       (incf sum-square-error (square (- (predict-regression-forest forest datamatrix i)
@@ -723,7 +723,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
   (let ((index-offset (forest-index-offset forest))
         (n-tree (forest-n-tree forest)))
     (declare (optimize (speed 3) (safety 0))
-             (type (simple-array double-float) datamatrix)
+             (type (simple-array single-float) datamatrix)
              (type (simple-array fixnum) index-offset)
              (type fixnum datum-index n-tree))
     (let ((leaf-index-list
@@ -734,9 +734,9 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
              (forest-dtree-list forest))))
       (let ((sv-index (make-array (forest-n-tree forest) :element-type 'fixnum))
             (sv-val (make-array (forest-n-tree forest)
-                                :element-type 'double-float :initial-element 1d0)))
+                                :element-type 'single-float :initial-element 1.0)))
         (declare (type (simple-array fixnum) sv-index)
-                 (type (simple-array double-float) sv-val))
+                 (type (simple-array single-float) sv-val))
         (loop for i fixnum from 0 below n-tree
               for index fixnum in leaf-index-list
               do (setf (aref sv-index i) (+ index (aref index-offset i))))
@@ -760,7 +760,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
           do (setf sum (+ sum (dtree-max-leaf-index dtree)))
              (setf (aref offset i) sum))))
 
-(defun make-refine-learner (forest &optional (gamma 10d0))
+(defun make-refine-learner (forest &optional (gamma 10.0))
   (let ((n-class (forest-n-class forest))
         (input-dim (loop for n-leaves in (mapcar #'dtree-max-leaf-index (forest-dtree-list forest))
                          sum n-leaves)))
@@ -772,7 +772,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
   (let ((sv (make-refine-vector forest datamatrix datum-index)))
     (etypecase refine-learner
       (cl-online-learning::sparse-arow
-       (if (> (clol:sparse-arow-predict refine-learner sv) 0d0) 1 0))
+       (if (> (clol:sparse-arow-predict refine-learner sv) 0.0) 1 0))
       (cl-online-learning::one-vs-rest
        (clol:one-vs-rest-predict refine-learner sv)))))
 
@@ -782,7 +782,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
         (len (array-dimension datamatrix 0))
         (n-tree (forest-n-tree forest)))
     (declare (optimize (speed 3) (safety 0))
-             (type (simple-array double-float) datamatrix)
+             (type (simple-array single-float) datamatrix)
              (type (simple-array fixnum) index-offset)
              (type fixnum len n-tree))
     (let ((refine-dataset (make-array len)))
@@ -808,24 +808,24 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
 (defun train-refine-learner-binary (refine-learner refine-dataset target)
   (let* ((n-tree (length (svref refine-dataset 0)))
          (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
-         (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+         (sv-val (make-array n-tree :element-type 'single-float :initial-element 1.0))
          (sv (clol.vector:make-sparse-vector sv-index sv-val)))
     (loop for i from 0 below (length refine-dataset) do
       (setf (clol.vector:sparse-vector-index-vector sv) (svref refine-dataset i))
       (clol:sparse-arow-update refine-learner sv
-                               (if (= (aref target i) 0) -1d0 1d0)))))
+                               (if (= (aref target i) 0) -1.0 1.0)))))
 
 (defun test-refine-learner-binary (refine-learner refine-dataset target &key quiet-p)
   (let* ((len (length refine-dataset))
          (n-tree (length (svref refine-dataset 0)))
          (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
-         (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+         (sv-val (make-array n-tree :element-type 'single-float :initial-element 1.0))
          (sv (clol.vector:make-sparse-vector sv-index sv-val))
          (n-correct 0))
     (loop for i from 0 below (length refine-dataset) do
       (setf (clol.vector:sparse-vector-index-vector sv) (svref refine-dataset i))
       (when (= (aref target i)
-               (if (> (clol:sparse-arow-predict refine-learner sv) 0d0) 1 0))
+               (if (> (clol:sparse-arow-predict refine-learner sv) 0.0) 1 0))
         (incf n-correct)))
     (calc-accuracy n-correct len :quiet-p quiet-p)))
   
@@ -837,7 +837,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
          (n-class (clol::one-vs-rest-n-class refine-learner))
          (learners (clol::one-vs-rest-learners-vector refine-learner))
          (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
-         (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+         (sv-val (make-array n-tree :element-type 'single-float :initial-element 1.0))
          (sv-vec (make-array n-class)))
     (loop for i fixnum from 0 below n-class do
       (setf (svref sv-vec i)
@@ -848,7 +848,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
               (svref refine-dataset datum-id))
         (clol:sparse-arow-update (svref learners class-id)
                                  (svref sv-vec class-id)
-                                 (if (= (aref target datum-id) class-id) 1d0 -1d0))))))
+                                 (if (= (aref target datum-id) class-id) 1.0 -1.0))))))
 
 ;; dataset: simple vector of refine-dataset
 (defun set-activation-matrix!
@@ -868,7 +868,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
 (defun maximize-activation/count (activation-matrix end-of-mini-batch target cycle)
   (let ((n-correct 0))
     (loop for i from 0 below end-of-mini-batch do
-      (let ((max-activation most-negative-double-float)
+      (let ((max-activation most-negative-single-float)
             (max-class 0))
         (loop for j from 0 below (array-dimension activation-matrix 1) do
           (when (> (aref activation-matrix i j) max-activation)
@@ -882,9 +882,9 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
   (let* ((len (length refine-dataset))
          (n-tree (length (svref refine-dataset 0)))
          (n-class (clol::one-vs-rest-n-class refine-learner))
-         (activation-matrix (make-array (list mini-batch-size n-class) :element-type 'double-float :initial-element 0d0))
+         (activation-matrix (make-array (list mini-batch-size n-class) :element-type 'single-float :initial-element 0.0))
          (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
-         (sv-val (make-array n-tree :element-type 'double-float :initial-element 1d0))
+         (sv-val (make-array n-tree :element-type 'single-float :initial-element 1.0))
          (sv-vec (make-array n-class))
          (n-correct 0))
     ;; init sv-vec
@@ -952,17 +952,17 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
 (defun cross-validation-forest-with-refine-learner
     (n-fold n-class datamatrix target
      &key (n-tree 100) (bagging-ratio 0.1) (max-depth 5) (min-region-samples 1)
-       (n-trial 10) (gain-test #'entropy) (remove-sample-indices? t) (gamma 10d0))
+       (n-trial 10) (gain-test #'entropy) (remove-sample-indices? t) (gamma 10.0))
   (let* ((datum-dim (array-dimension datamatrix 1))
          (accuracy-sum 0)
          (total-size (array-dimension datamatrix 0))
          (test-size (floor (/ total-size n-fold)))
          (train-size (- total-size test-size))
          (test-datamatrix (make-array (list test-size datum-dim)
-                                       :element-type 'double-float :initial-element 0d0))
+                                       :element-type 'single-float :initial-element 0.0))
          (test-target (make-array test-size :element-type 'fixnum :initial-element 0))
          (train-datamatrix (make-array (list train-size datum-dim)
-                                       :element-type 'double-float :initial-element 0d0))
+                                       :element-type 'single-float :initial-element 0.0))
          (train-target (make-array train-size :element-type 'fixnum :initial-element 0)))
     (loop for n from 0 below n-fold do
       ;; Init train/test datamatrix/target
@@ -997,7 +997,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
 
 ;;; Global refinement (Regression)
 
-(defun make-regression-refine-learner (forest &optional (gamma 0.99d0))
+(defun make-regression-refine-learner (forest &optional (gamma 0.99))
   (assert (null (forest-n-class forest)))
   (let ((input-dim (loop for n-leaves in (mapcar #'dtree-max-leaf-index (forest-dtree-list forest))
                          sum n-leaves)))
@@ -1008,14 +1008,14 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
         (len (array-dimension datamatrix 0))
         (n-tree (forest-n-tree forest)))
     ;; (declare (optimize (speed 3) (safety 0))
-    ;;          (type (simple-array double-float) datamatrix)
+    ;;          (type (simple-array single-float) datamatrix)
     ;;          (type (simple-array fixnum) index-offset)
     ;;          (type fixnum len n-tree))
     (let ((refine-dataset (make-array len)))
       (loop for i from 0 below len do
         (setf (aref refine-dataset i)
               (cons (make-array n-tree :element-type 'fixnum)
-                    (make-array n-tree :element-type 'double-float))))
+                    (make-array n-tree :element-type 'single-float))))
       (mapc ;mapc/pmapc
        (lambda (dtree)
          (let* ((tree-id (dtree-id dtree))
@@ -1038,7 +1038,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
   (let ((index-offset (forest-index-offset forest))
         (n-tree (forest-n-tree forest)))
     ;; (declare (optimize (speed 3) (safety 0))
-    ;;          (type (simple-array double-float) datamatrix)
+    ;;          (type (simple-array single-float) datamatrix)
     ;;          (type (simple-array fixnum) index-offset)
     ;;          (type fixnum datum-index n-tree))
     (let ((leaf-index-val-pair-list
@@ -1049,9 +1049,9 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
                        (node-regression-mean node))))
              (forest-dtree-list forest))))
       (let ((sv-index (make-array (forest-n-tree forest) :element-type 'fixnum))
-            (sv-val (make-array (forest-n-tree forest) :element-type 'double-float)))
+            (sv-val (make-array (forest-n-tree forest) :element-type 'single-float)))
         ;; (declare (type (simple-array fixnum) sv-index)
-        ;;          (type (simple-array double-float) sv-val))
+        ;;          (type (simple-array single-float) sv-val))
         (loop for i fixnum from 0 below n-tree
               for index-val-pair in leaf-index-val-pair-list
               do (setf (aref sv-index i) (+ (car index-val-pair) (aref index-offset i))
@@ -1065,7 +1065,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
 (defun train-regression-refine-learner (refine-learner refine-dataset target)
   (let* ((n-tree (length (car (svref refine-dataset 0))))
          (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
-         (sv-val (make-array n-tree :element-type 'double-float))
+         (sv-val (make-array n-tree :element-type 'single-float))
          (sv (clol.vector:make-sparse-vector sv-index sv-val)))
     (loop for i from 0 below (length refine-dataset) do
       (setf (clol.vector:sparse-vector-index-vector sv) (car (svref refine-dataset i))
@@ -1077,9 +1077,9 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
     (let* ((len (length refine-dataset))
            (n-tree (length (car (svref refine-dataset 0))))
            (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
-           (sv-val (make-array n-tree :element-type 'double-float))
+           (sv-val (make-array n-tree :element-type 'single-float))
            (sv (clol.vector:make-sparse-vector sv-index sv-val))
-           (sum-square-error 0d0))
+           (sum-square-error 0.0))
       (loop for i from 0 below (length refine-dataset) do
         (setf (clol.vector:sparse-vector-index-vector sv) (car (svref refine-dataset i))
               (clol.vector:sparse-vector-value-vector sv) (cdr (svref refine-dataset i)))
@@ -1097,7 +1097,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
 
 (defun make-l2-norm-multiclass (learner)
   (let* ((dim (clol::one-vs-rest-input-dimension learner))
-         (arr (make-array dim :element-type 'double-float :initial-element 0d0)))
+         (arr (make-array dim :element-type 'single-float :initial-element 0.0)))
     (loop for i from 0 below (clol::one-vs-rest-n-class learner) do
       (let* ((sub-learner (svref (clol::one-vs-rest-learners-vector learner) i))
              (weight-vec (funcall (clol::one-vs-rest-learner-weight learner) sub-learner)))
@@ -1107,7 +1107,7 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
 
 (defun make-l2-norm-binary (learner)
   (let* ((dim (clol::sparse-arow-input-dimension learner))
-         (arr (make-array dim :element-type 'double-float :initial-element 0d0))
+         (arr (make-array dim :element-type 'single-float :initial-element 0.0))
          (weight-vec (clol::sparse-arow-weight learner)))
     (loop for i from 0 below dim do
       (setf (aref arr i) (square (aref weight-vec i))))

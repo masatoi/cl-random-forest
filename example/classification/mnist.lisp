@@ -167,4 +167,4 @@
 
 (cross-validation-forest-with-refine-learner
  n-fold mnist-n-class mnist-datamatrix mnist-target
- :n-tree 100 :bagging-ratio 0.1 :max-depth 10 :n-trial 28 :gamma 10d0 :min-region-samples 5)
+ :n-tree 100 :bagging-ratio 0.1 :max-depth 10 :n-trial 28 :gamma 10 :min-region-samples 5)
