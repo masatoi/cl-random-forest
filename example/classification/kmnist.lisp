@@ -8,7 +8,7 @@
 
 ;; KMNIST data
 ;; https://github.com/rois-codh/kmnist
-(defparameter dir (asdf:system-relative-pathname :cl-random-forest "dataset/"))
+(defparameter dir (asdf:system-relative-pathname :cl-random-forest "dataset/kmnist/"))
 (defparameter mnist-dim 784)
 (defparameter mnist-n-class 10)
 
@@ -63,14 +63,14 @@
            (number-of-rows (slot-value mnist-dataset 'number-of-rows))
            (number-of-columns (slot-value mnist-dataset 'number-of-columns))
            (datamatrix (make-array (list number-of-images (* number-of-rows number-of-columns))
-                                   :element-type 'double-float
-                                   :initial-element 0d0)))
+                                   :element-type 'single-float
+                                   :initial-element 0.0)))
       (loop for i from 0 below number-of-images
             do (let ((row (lisp-binary:read-bytes (* number-of-rows number-of-columns)
                                                   in :element-type '(unsigned-byte 8))))
                  (loop for j from 0 below (* number-of-rows number-of-columns)
                        for r across row
-                       do (setf (aref datamatrix i j) (/ r (if scaling? 255d0 1d0))))))
+                       do (setf (aref datamatrix i j) (/ r (if scaling? 255.0 1.0))))))
       datamatrix)))
 
 (defun read-mnist-labels (file)
@@ -83,11 +83,6 @@
             for x across target-uint
             do (setf (aref target i) x))
       target)))
-
-(defun read-mnist-labels (file)
-  (lisp-binary:with-open-binary-file (in file :direction :input)
-    (let* ((mnist-labels (lisp-binary:read-binary 'mnist-labels in)))
-      (slot-value mnist-labels 'target))))
 
 (defparameter mnist-datamatrix
   (read-mnist-dataset (merge-pathnames "train-images-idx3-ubyte" dir) :scaling? t))
@@ -117,16 +112,16 @@
               :max-depth 15 :n-trial 28 :min-region-samples 5))
 
 ;; Prediction
-(predict-dtree mnist-dtree mnist-datamatrix 0) ; => 5 (correct)
+(predict-dtree mnist-dtree mnist-datamatrix 0) ; => 8 (correct)
 
 ;; Testing with training data
 (test-dtree mnist-dtree mnist-datamatrix mnist-target)
 
-;; Accuracy: 90.37333%, Correct: 54224, Total: 60000
+;; Accuracy: 82.450005%, Correct: 49470, Total: 60000
 
 ;; Testing with test data
 (test-dtree mnist-dtree mnist-datamatrix-test mnist-target-test)
-;; Accuracy: 81.52%, Correct: 8152, Total: 10000
+;; Accuracy: 56.97%, Correct: 5697, Total: 10000
 
 ;;; Make Random Forest ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -134,48 +129,54 @@
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 (setf lparallel:*kernel* nil)
 
-;; 6.079 seconds (1 core), 2.116 seconds (4 core)
-(defparameter mnist-forest
-  (make-forest mnist-n-class mnist-datamatrix mnist-target
-               :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5))
+;; 2.987 seconds (4 core)
+(time
+ (defparameter mnist-forest
+   (make-forest mnist-n-class mnist-datamatrix mnist-target
+                :n-tree 500 :bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5)))
 
 ;; Prediction
-(predict-forest mnist-forest mnist-datamatrix 0) ; => 5 (correct)
+(predict-forest mnist-forest mnist-datamatrix 0) ; => 8 (correct)
 
 ;; Testing with test data
-;; 4.786 seconds, Accuracy: 93.38%
+
+;; Accuracy: 69.4%, Correct: 6940, Total: 10000 (4.775 seconds)
 (test-forest mnist-forest mnist-datamatrix-test mnist-target-test)
 
-;; 42.717 seconds (1 core), 13.24 seconds (4 core)
-(defparameter mnist-forest-tall
-  (make-forest mnist-n-class mnist-datamatrix mnist-target
-               :n-tree 100 :bagging-ratio 1.0 :max-depth 15 :n-trial 28 :min-region-samples 5))
+;; 16.847 seconds (4 core)
+(time
+ (defparameter mnist-forest-tall
+   (make-forest mnist-n-class mnist-datamatrix mnist-target
+                :n-tree 100 :bagging-ratio 1.0 :max-depth 15 :n-trial 28 :min-region-samples 5)))
 
-;; 2.023 seconds, Accuracy: 96.62%
-(test-forest mnist-forest-tall mnist-datamatrix-test mnist-target-test)
+;; 1.291 seconds, Accuracy: 81.23%
+(time (test-forest mnist-forest-tall mnist-datamatrix-test mnist-target-test))
 
 ;;; Global Refinement of Random Forest ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Generate sparse data from Random Forest
 
-;; 6.255 seconds (1 core), 1.809 seconds (4 core)
-(defparameter mnist-refine-dataset
-  (make-refine-dataset mnist-forest mnist-datamatrix))
+;; 3.303 seconds (4 core)
+(time
+ (defparameter mnist-refine-dataset
+   (make-refine-dataset mnist-forest mnist-datamatrix)))
 
-;; 0.995 seconds (1 core), 0.322 seconds (4 core)
-(defparameter mnist-refine-test
-  (make-refine-dataset mnist-forest mnist-datamatrix-test))
+;; 0.423 seconds (4 core)
+(time
+ (defparameter mnist-refine-test
+   (make-refine-dataset mnist-forest mnist-datamatrix-test)))
 
 (defparameter mnist-refine-learner (make-refine-learner mnist-forest))
 
-;; 4.347 seconds (1 core), 2.281 seconds (4 core), Accuracy: 98.259%
-(train-refine-learner-process mnist-refine-learner mnist-refine-dataset mnist-target
-                              mnist-refine-test mnist-target-test)
+;; 2.495 seconds (4 core), Accuracy: 90.97
+(time
+ (train-refine-learner-process mnist-refine-learner mnist-refine-dataset mnist-target
+                               mnist-refine-test mnist-target-test))
 
 (test-refine-learner mnist-refine-learner mnist-refine-test mnist-target-test)
 
-;; 5.859 seconds (1 core), 4.090 seconds (4 core), Accuracy: 98.29%
-(loop repeat 5 do
+;; more training
+(loop repeat 10 do
   (train-refine-learner mnist-refine-learner mnist-refine-dataset mnist-target)
   (test-refine-learner mnist-refine-learner mnist-refine-test mnist-target-test))
 
@@ -221,4 +222,4 @@
 
 (cross-validation-forest-with-refine-learner
  n-fold mnist-n-class mnist-datamatrix mnist-target
- :n-tree 100 :bagging-ratio 0.1 :max-depth 10 :n-trial 28 :gamma 10d0 :min-region-samples 5)
+ :n-tree 100 :bagging-ratio 0.1 :max-depth 10 :n-trial 28 :gamma 10.0 :min-region-samples 5)

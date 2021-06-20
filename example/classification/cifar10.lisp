@@ -14,13 +14,13 @@
 (defparameter n-class 10)
 
 (defparameter x
-  (make-array '(50000 3072) :element-type 'double-float))
+  (make-array '(50000 3072) :element-type 'single-float))
 
 (defparameter y
   (make-array 50000 :element-type 'fixnum))
 
 (defparameter x.t
-  (make-array '(10000 3072) :element-type 'double-float))
+  (make-array '(10000 3072) :element-type 'single-float))
 
 (defparameter y.t
   (make-array 10000 :element-type 'fixnum))
@@ -30,7 +30,7 @@
     (loop for i from (* n 10000) below (* (1+ n) 10000) do
       (setf (aref target i) (read-byte s))
       (loop for j from 0 below 3072 do
-        (setf (aref datamatrix i j) (coerce (read-byte s) 'double-float))))
+        (setf (aref datamatrix i j) (coerce (read-byte s) 'single-float))))
     'done))
 
 (loop for i from 0 to 4 do
