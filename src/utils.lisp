@@ -1,16 +1,17 @@
-;;; -*- coding:utf-8; mode:lisp -*-
-
-(in-package :cl-user)
-(defpackage :cl-random-forest.utils
+(defpackage :cl-random-forest/src/utils
   (:use :cl)
-  (:nicknames :clrf.utils)
-  (:export :dotimes/pdotimes :mapcar/pmapcar :mapc/pmapc :push-ntimes
-           :clol-dataset->datamatrix/target
-           :clol-dataset->datamatrix/target-regression
-           :read-data :read-data-regression
-           :write-to-r-format-from-clol-dataset))
+  (:nicknames :cl-random-forest.utils :clrf.utils)
+  (:export #:dotimes/pdotimes
+           #:mapcar/pmapcar
+           #:mapc/pmapc
+           #:push-ntimes
+           #:clol-dataset->datamatrix/target
+           #:clol-dataset->datamatrix/target-regression
+           #:read-data
+           #:read-data-regression
+           #:write-to-r-format-from-clol-dataset))
 
-(in-package :cl-random-forest.utils)
+(in-package :cl-random-forest/src/utils)
 
 ;;; parallelizaion utils
 
@@ -40,7 +41,7 @@
                (setf (aref ,vec ,var) (progn ,@body))))
          (setf ,lst (coerce ,vec 'list))))))
 
-;;; read
+;;; Read from cl-online-learning dataset
 
 (defun clol-dataset->datamatrix/target (dataset)
   (let* ((len (length dataset))
@@ -77,8 +78,7 @@
                   (,iter (cddr ,inner-list)))))
        (,iter ,list))))
 
-
-;; Read from libsvm format data
+;;; Read from libsvm format dataset
 
 (defun read-data (data-path data-dimension)
   (multiple-value-bind (data-list dim)
@@ -114,7 +114,7 @@
                  (setf (aref datamatrix i (1- j)) (coerce v 'single-float))))
       (values datamatrix target))))
 
-;;; write for R
+;;; Write for R format
 
 (defun format-datum (datum stream)
   (format stream "class~A" (car datum))

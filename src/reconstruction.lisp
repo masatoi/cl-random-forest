@@ -1,6 +1,13 @@
-;;; -*- coding:utf-8; mode:lisp -*-
+(defpackage :cl-random-forest/src/reconstruction
+  (:use #:cl
+        #:cl-random-forest/src/random-forest)
+  (:nicknames :cl-random-forest.reconstruction :clrf.reconstruction)
+  (:export #:reconstruction-dtree
+           #:reconstruction-forest
+           #:encode-datum
+           #:decode-datum))
 
-(in-package :cl-random-forest)
+(in-package :cl-random-forest/src/reconstruction)
 
 (defun reconstruction-backward (node input-range-array)
   (let ((parent-node (node-parent-node node)))

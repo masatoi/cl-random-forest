@@ -1,20 +1,29 @@
-;;; -*- coding:utf-8; mode:lisp -*-
+(defpackage :cl-random-forest/src/random-forest
+  (:use #:cl
+        #:cl-random-forest/src/utils)
+  (:export #:make-dtree
+           #:predict-dtree
+           #:test-dtree
+           #:make-forest
+           #:predict-forest
+           #:test-forest
+           #:make-rtree
+           #:predict-rtree
+           #:test-rtree
+           #:make-regression-forest
+           #:predict-regression-forest
+           #:test-regression-forest
+           #:make-refine-vector
+           #:make-refine-learner
+           #:predict-refine-learner
+           #:make-refine-dataset
+           #:train-refine-learner
+           #:test-refine-learner
+           #:train-refine-learner-process
+           #:cross-validation-forest-with-refine-learner
+           #:pruning!))
 
-(in-package :cl-user)
-(defpackage cl-random-forest
-  (:use :cl :cl-random-forest.utils)
-  (:nicknames :clrf)
-  (:export :make-dtree :predict-dtree :test-dtree
-           :make-forest :predict-forest :test-forest
-           :make-rtree :predict-rtree :test-rtree
-           :make-regression-forest :predict-regression-forest :test-regression-forest
-           :make-refine-vector :make-refine-learner :predict-refine-learner :make-refine-dataset
-           :train-refine-learner :test-refine-learner :train-refine-learner-process
-           :cross-validation-forest-with-refine-learner :pruning!
-           :forest-feature-importance :forest-feature-importance-by-impurity
-           :reconstruction-forest :encode-datum :make-leaf-node-vector :decode-datum))
-
-(in-package :cl-random-forest)
+(in-package :cl-random-forest/src/random-forest)
 
 ;;; decision tree
 

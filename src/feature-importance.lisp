@@ -1,6 +1,11 @@
-;; -*- coding:utf-8; mode:lisp -*-
+(defpackage :cl-random-forest/src/feature-importance
+  (:use #:cl
+        #:cl-random-forest/src/random-forest)
+  (:nicknames :cl-random-forest.feature-importance :clrf.feature-importance)
+  (:export #:forest-feature-importance
+           #:forest-feature-importance-by-impurity))
 
-(in-package :clrf)
+(in-package :cl-random-forest/src/feature-importance)
 
 (defun make-oob-sample-indices (total-size sample-indices)
   (let ((bitvec (make-array total-size :element-type 'bit :initial-element 0)))
