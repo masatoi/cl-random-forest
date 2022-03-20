@@ -2,7 +2,13 @@
 
 ;; set dynamic-space-size >= 2500
 
-(in-package :cl-random-forest)
+(defpackage :cl-random-forest/example/reconstruction/mnist
+  (:use #:cl
+        #:cl-random-forest/src/random-forest
+        #:cl-random-forest/src/reconstruction
+        #:cl-random-forest/src/utils))
+
+(in-package :cl-random-forest/example/reconstruction/mnist)
 
 ;;; Load Dataset ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -20,9 +26,8 @@
     (defparameter mnist-datamatrix datamat)
     (defparameter mnist-target target)))
 
-
 ;; Enable parallelization
-(setf lparallel:*kernel* (lparallel:make-kernel 4))
+(setf lparallel:*kernel* (lparallel:make-kernel 16))
 
 ;; Note that SAVE-PARENT-NODE? keyword option is true
 (defparameter mnist-forest

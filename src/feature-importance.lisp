@@ -1,6 +1,11 @@
-;; -*- coding:utf-8; mode:lisp -*-
+(defpackage :cl-random-forest/src/feature-importance
+  (:use #:cl
+        #:cl-random-forest/src/random-forest)
+  (:nicknames :cl-random-forest.feature-importance :clrf.feature-importance)
+  (:export #:forest-feature-importance
+           #:forest-feature-importance-by-impurity))
 
-(in-package :clrf)
+(in-package :cl-random-forest/src/feature-importance)
 
 (defun make-oob-sample-indices (total-size sample-indices)
   (let ((bitvec (make-array total-size :element-type 'bit :initial-element 0)))
@@ -23,7 +28,7 @@
                        &key quiet-p oob-sample-indices)
   (declare (optimize (speed 3) (safety 0))
            (type dtree dtree)
-           (type (simple-array double-float) datamatrix)
+           (type (simple-array single-float) datamatrix)
            (type (simple-array fixnum (*)) target))
   (let* ((n-correct 0)
          (oob-sample-indices (if (null oob-sample-indices)
@@ -43,7 +48,7 @@
 (defun find-leaf-randomized (node datamatrix datum-index randomized-attribute oob-sample-indices)
   (declare (optimize (speed 3) (safety 0))
            (type fixnum datum-index)
-           (type (simple-array double-float) datamatrix)
+           (type (simple-array single-float) datamatrix)
            (type (simple-array fixnum) oob-sample-indices))
   (flet ((random-pick-oob-index ()
            (aref oob-sample-indices (random (length oob-sample-indices)))))
@@ -55,7 +60,7 @@
                                (aref datamatrix (random-pick-oob-index) attribute)
                                (aref datamatrix datum-index attribute))))
                (declare (type fixnum attribute)
-                        (type double-float threshold datum))
+                        (type single-float threshold datum))
                (if (>= datum threshold)
                    (find-leaf-randomized (node-left-node node) datamatrix datum-index
                                          randomized-attribute oob-sample-indices)
@@ -65,18 +70,18 @@
 (defun predict-dtree-randomized (dtree datamatrix datum-index randomized-attribute oob-sample-indices)
   (declare (optimize (speed 3) (safety 0))
            (type dtree dtree)
-           (type (simple-array double-float) datamatrix)
+           (type (simple-array single-float) datamatrix)
            (type fixnum datum-index randomized-attribute)
            (type (simple-array fixnum) oob-sample-indices))
-  (let ((max 0d0)
+  (let ((max 0.0)
         (max-class 0)
         (dist (node-class-distribution
                (find-leaf-randomized (dtree-root dtree) datamatrix datum-index
                                      randomized-attribute oob-sample-indices)))
         (n-class (dtree-n-class dtree)))
-    (declare (type double-float max)
+    (declare (type single-float max)
              (type fixnum max-class n-class)
-             (type (simple-array double-float) dist))
+             (type (simple-array single-float) dist))
     (loop for i fixnum from 0 to (1- n-class) do
       (when (> (aref dist i) max)
         (setf max (aref dist i)
@@ -87,7 +92,7 @@
                                   &key quiet-p oob-sample-indices)
   (declare (optimize (speed 3) (safety 0))
            (type dtree dtree)
-           (type (simple-array double-float) datamatrix)
+           (type (simple-array single-float) datamatrix)
            (type (simple-array fixnum (*)) target))
   (let* ((n-correct 0)
          (oob-sample-indices (if (null oob-sample-indices)
@@ -126,13 +131,13 @@
 (defun test-rtree-oob (rtree datamatrix target &key quiet-p oob-sample-indices)
   (declare (optimize (speed 3) (safety 0))
            (type dtree rtree)
-           (type (simple-array double-float) datamatrix target))
-  (let* ((sum-square-error 0d0)
+           (type (simple-array single-float) datamatrix target))
+  (let* ((sum-square-error 0.0)
          (oob-sample-indices (if (null oob-sample-indices)
                                  (dtree-oob-sample-indices rtree)
                                  oob-sample-indices))
          (len-oob (length oob-sample-indices)))
-    (declare (type double-float sum-square-error)
+    (declare (type single-float sum-square-error)
              (type fixnum len-oob)
              (type (simple-array fixnum) oob-sample-indices))
     (loop for i fixnum from 0 below len-oob do
@@ -157,14 +162,14 @@
                                   &key quiet-p oob-sample-indices)
   (declare (optimize (speed 3) (safety 0))
            (type dtree rtree)
-           (type (simple-array double-float) datamatrix target)
+           (type (simple-array single-float) datamatrix target)
            (type fixnum randomized-attribute))
-  (let* ((sum-square-error 0d0)
+  (let* ((sum-square-error 0.0)
          (oob-sample-indices (if (null oob-sample-indices)
                                  (dtree-oob-sample-indices rtree)
                                  oob-sample-indices))
          (len-oob (length oob-sample-indices)))
-    (declare (type double-float sum-square-error)
+    (declare (type single-float sum-square-error)
              (type fixnum len-oob)
              (type (simple-array fixnum) oob-sample-indices))
     (loop for i fixnum from 0 below len-oob do
@@ -181,7 +186,7 @@
   (let* ((oob-sample-indices (dtree-oob-sample-indices rtree))
          (rms-oob (test-rtree-oob rtree datamatrix target
                                   :quiet-p t :oob-sample-indices oob-sample-indices))
-         (result (make-array (dtree-datum-dim rtree) :element-type 'double-float :initial-element 0d0)))
+         (result (make-array (dtree-datum-dim rtree) :element-type 'single-float :initial-element 0.0)))
     (loop for i from 0 below (dtree-datum-dim rtree) do
       (setf (aref result i)
             (- (test-rtree-oob-randomized rtree datamatrix target i :quiet-p t)
@@ -208,8 +213,8 @@
 
 (defun dtree-feature-importance-impurity (dtree)
   (let* ((dim (dtree-datum-dim dtree))
-         (acc-arr (clol::make-dvec dim 0d0))
-         (cnt-arr (clol::make-dvec dim 0d0)))
+         (acc-arr (clol::make-vec dim 0.0))
+         (cnt-arr (clol::make-vec dim 0.0)))
 
     ;; ignore root and leaf nodes
     (flet ((store-decrease-impurity (node)
@@ -222,12 +227,12 @@
                        (- (node-information-gain node)
                           (+ (* (/ (node-n-sample  left) len) (node-information-gain left))
                              (* (/ (node-n-sample right) len) (node-information-gain right)))))
-                 (incf (aref cnt-arr attr) 1d0)))))
+                 (incf (aref cnt-arr attr) 1.0)))))
       (traverse #'store-decrease-impurity (node-left-node (dtree-root dtree)))
       (traverse #'store-decrease-impurity (node-right-node (dtree-root dtree))))
     
     (loop for i from 0 below dim do
-      (when (> (aref cnt-arr i) 0d0)
+      (when (> (aref cnt-arr i) 0.0)
         (setf (aref acc-arr i) (/ (aref acc-arr i) (aref cnt-arr i)))))
     
     (let ((min (loop for i from 0 below dim minimize (aref acc-arr i))))
@@ -237,7 +242,7 @@
 
 (defun forest-feature-importance-impurity (forest)
   (let* ((len (forest-datum-dim forest))
-         (result (make-array len :initial-element 0d0)))
+         (result (make-array len :initial-element 0.0)))
     (dolist (importance-vec
              (mapcar/pmapcar #'dtree-feature-importance-impurity (forest-dtree-list forest)))
       (loop for i from 0 below len do

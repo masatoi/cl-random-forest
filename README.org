@@ -47,7 +47,7 @@ ros install masatoi/cl-online-learning masatoi/cl-random-forest
 *** Classification
 **** Prepare training dataset
 A dataset consists of a target vector and a input data matrix.
-For classification, the target vector should be a fixnum simple-vector and the data matrix should be a 2-dimensional double-float array whose row corresponds one datum.
+For classification, the target vector should be a fixnum simple-vector and the data matrix should be a 2-dimensional single-float array whose row corresponds one datum.
 Note that the target is a integer starting from 0.
 For example, the following dataset is valid for 4-class classification with 2-dimensional input.
 
@@ -58,18 +58,18 @@ For example, the following dataset is valid for 4-class classification with 2-di
 
 (defparameter *datamatrix*
   (make-array '(11 2)
-              :element-type 'double-float
-              :initial-contents '((-1.0d0 -2.0d0)
-                                  (-2.0d0 -1.5d0)
-                                  (1.0d0 -2.0d0)
-                                  (3.0d0 -1.5d0)
-                                  (-2.0d0 2.0d0)
-                                  (-3.0d0 1.0d0)
-                                  (-2.0d0 1.0d0)
-                                  (3.0d0 2.0d0)
-                                  (2.0d0 2.0d0)
-                                  (1.0d0 2.0d0)
-                                  (1.0d0 1.0d0))))
+              :element-type 'single-float
+              :initial-contents '((-1.0 -2.0)
+                                  (-2.0 -1.5)
+                                  (1.0 -2.0)
+                                  (3.0 -1.5)
+                                  (-2.0 2.0)
+                                  (-3.0 1.0)
+                                  (-2.0 1.0)
+                                  (3.0 2.0)
+                                  (2.0 2.0)
+                                  (1.0 2.0)
+                                  (1.0 1.0))))
 #+END_SRC
 
 [[./docs/img/clrf-example-simple.png]]
@@ -206,27 +206,27 @@ In case of classification, the target is a vector of integer values, whereas in 
 (defparameter *n* 100)
 
 (defparameter *datamatrix*
-  (let ((arr (make-array (list *n* 1) :element-type 'double-float)))
+  (let ((arr (make-array (list *n* 1) :element-type 'single-float)))
     (loop for i from 0 below *n* do
       (setf (aref arr i 0) (random-uniform (- pi) pi)))
     arr))
 
 (defparameter *target*
-  (let ((arr (make-array *n* :element-type 'double-float)))
+  (let ((arr (make-array *n* :element-type 'single-float)))
     (loop for i from 0 below *n* do
       (setf (aref arr i) (+ (sin (aref *datamatrix* i 0))
-                            (random-normal :sd 0.1d0))))
+                            (random-normal :sd 0.1))))
     arr))
 
 (defparameter *test*
-  (let ((arr (make-array (list *n* 1) :element-type 'double-float)))
+  (let ((arr (make-array (list *n* 1) :element-type 'single-float)))
     (loop for i from 0 below *n*
           for x from (- pi) to pi by (/ (* 2 pi) *n*)
           do (setf (aref arr i 0) x))
     arr))
 
 (defparameter *test-target*
-  (let ((arr (make-array *n* :element-type 'double-float)))
+  (let ((arr (make-array *n* :element-type 'single-float)))
     (loop for i from 0 below *n* do
       (setf (aref arr i) (sin (aref *test* i 0))))
     arr))
@@ -241,11 +241,11 @@ In case of classification, the target is a vector of integer values, whereas in 
 
 ;; Testing
 (test-rtree *rtree* *test* *test-target*)
-; RMSE: 0.09220732459820888d0
+; RMSE: 0.09220732459820888
 
 ;; Make a prediction for first data point of test dataset
 (predict-rtree *rtree* *test* 0)
-; => -0.08374452528780077d0
+; => -0.08374452528780077
 #+END_SRC
 
 **** Make Random Forest for Regression
@@ -259,11 +259,11 @@ In case of classification, the target is a vector of integer values, whereas in 
 
 ;; Testing
 (test-regression-forest *rforest* *test* *test-target*)
-; RMSE: 0.05006872795207973d0
+; RMSE: 0.05006872795207973
 
 ;; Make a prediction for first data point of test dataset
 (predict-regression-forest *rforest* *test* 0)
-; => -0.16540771296145781d0
+; => -0.16540771296145781
 #+END_SRC
 
 [[./docs/img/clrf-regression.png]]

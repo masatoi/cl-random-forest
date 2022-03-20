@@ -24,7 +24,7 @@
          (n-patches (number-of-patches datum-shape patch-shape stride))
          (patch-datamatrix (make-array (list (* n-patches (array-dimension datamatrix 0))
                                              patch-size)
-                                       :element-type 'double-float
+                                       :element-type 'single-float
                                        :initial-element 0d0))
          (patch-index 0))
     (loop for datum-index fixnum from 0 below (array-dimension datamatrix 0)
@@ -55,11 +55,11 @@
                             (aref target i))))
     patch-target))
 
-;; (defparameter *datamatrix* (make-array `(1 ,(* 3 5)) :element-type 'double-float))
+;; (defparameter *datamatrix* (make-array `(1 ,(* 3 5)) :element-type 'single-float))
 ;; (dotimes (j (* 3 5))
 ;;   (setf (aref *datamatrix* 0 j) (* 1d0 j)))
 
-;; (defparameter *patch-datamatrix* (make-array '(3 2) :element-type 'double-float))
+;; (defparameter *patch-datamatrix* (make-array '(3 2) :element-type 'single-float))
 
 ;; (set-one-patch *datamatrix* 0 *patch-datamatrix* 0 '(0 0) '(3 5) '(2 1))
 ;; (set-one-patch *datamatrix* 0 *patch-datamatrix* 1 '(1 0) '(3 5) '(2 1))
@@ -80,7 +80,7 @@
 ;; ;;     (8.0d0 13.0d0)
 ;; ;;     (9.0d0 14.0d0))
 
-;; (defparameter *datamatrix* (make-array `(2 ,(* 3 5)) :element-type 'double-float))
+;; (defparameter *datamatrix* (make-array `(2 ,(* 3 5)) :element-type 'single-float))
 ;; (defparameter *target* #(1 2))
 ;; (dotimes (j (* 3 5))
 ;;   (setf (aref *datamatrix* 0 j) (* 1d0 j)))
@@ -90,7 +90,7 @@
 ;; (defparameter *patch-datamatrix3* (make-patch-datamatrix *datamatrix* '(3 5) '(2 1) 1))
 ;; (defparameter *patch-target3* (make-patch-target *target* '(3 5) '(2 1) 1))
 
-;; (defparameter *datamatrix* (make-array '(1 81) :element-type 'double-float))
+;; (defparameter *datamatrix* (make-array '(1 81) :element-type 'single-float))
 ;; (dotimes (j 81)
 ;;   (setf (aref *datamatrix* 0 j) (* 1d0 j)))
 
@@ -126,7 +126,7 @@
 ;; (ql:quickload :clgplot)
 
 ;; (defun split-patch-matrix (patch-datamatrix patch-shape patch-index)
-;;   (let ((patch-matrix (make-array patch-shape :element-type 'double-float)))
+;;   (let ((patch-matrix (make-array patch-shape :element-type 'single-float)))
 ;;     (loop for i from 0 below (car patch-shape)
 ;;           do (loop for j from 0 below (cadr patch-shape)
 ;;                    do (setf (aref patch-matrix i j)
@@ -161,7 +161,7 @@
 ;;                    (cdr feature-extraction-forests)))
 ;;     (let ((class-distribution-datamatrix
 ;;             (make-array (list datasize (* n-patches-per-datum n-class n-forests))
-;;                         :element-type 'double-float
+;;                         :element-type 'single-float
 ;;                         :initial-element 0d0)))
 ;;       (loop for datum-index from 0 below datasize
 ;;             do (when (and print-progress? (zerop (mod (1+ datum-index) (floor datasize 100))))
@@ -202,7 +202,7 @@
         (n-patch (/ (array-dimension patch-datamatrix 0)
                     (array-dimension datamatrix 0))))
     (declare (optimize (speed 3) (safety 0))
-             (type (simple-array double-float) datamatrix patch-datamatrix)
+             (type (simple-array single-float) datamatrix patch-datamatrix)
              (type (simple-array fixnum) index-offset)
              (type fixnum len n-tree n-patch))
     (let ((refine-dataset (make-array len)))
@@ -237,7 +237,7 @@
 ;;         (n-patch (/ (array-dimension patch-datamatrix 0)
 ;;                     (array-dimension datamatrix 0))))
 ;;     (declare (optimize (speed 3) (safety 0))
-;;              (type (simple-array double-float) datamatrix patch-datamatrix)
+;;              (type (simple-array single-float) datamatrix patch-datamatrix)
 ;;              (type (simple-array fixnum) index-offset)
 ;;              (type fixnum len n-tree n-patch))
 ;;     (let ((refine-dataset (make-array len)))
@@ -307,7 +307,7 @@
 (defun make-l2-norm-multiclass (learner)
   (let* ((dim (/ (clol::one-vs-rest-input-dimension learner)
                  *n-patch*))
-         (arr (make-array dim :element-type 'double-float :initial-element 0d0)))
+         (arr (make-array dim :element-type 'single-float :initial-element 0d0)))
     (loop for i from 0 below (clol::one-vs-rest-n-class learner) do
       (let* ((sub-learner (svref (clol::one-vs-rest-learners-vector learner) i))
              (weight-vec (funcall (clol::one-vs-rest-learner-weight learner) sub-learner)))

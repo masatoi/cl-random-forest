@@ -1,16 +1,17 @@
-;;; -*- coding:utf-8; mode:lisp -*-
-
-(in-package :cl-user)
-(defpackage :cl-random-forest.utils
+(defpackage :cl-random-forest/src/utils
   (:use :cl)
-  (:nicknames :clrf.utils)
-  (:export :dotimes/pdotimes :mapcar/pmapcar :mapc/pmapc :push-ntimes
-           :clol-dataset->datamatrix/target
-           :clol-dataset->datamatrix/target-regression
-           :read-data :read-data-regression
-           :write-to-r-format-from-clol-dataset))
+  (:nicknames :cl-random-forest.utils :clrf.utils)
+  (:export #:dotimes/pdotimes
+           #:mapcar/pmapcar
+           #:mapc/pmapc
+           #:push-ntimes
+           #:clol-dataset->datamatrix/target
+           #:clol-dataset->datamatrix/target-regression
+           #:read-data
+           #:read-data-regression
+           #:write-to-r-format-from-clol-dataset))
 
-(in-package :cl-random-forest.utils)
+(in-package :cl-random-forest/src/utils)
 
 ;;; parallelizaion utils
 
@@ -40,13 +41,13 @@
                (setf (aref ,vec ,var) (progn ,@body))))
          (setf ,lst (coerce ,vec 'list))))))
 
-;;; read
+;;; Read from cl-online-learning dataset
 
 (defun clol-dataset->datamatrix/target (dataset)
   (let* ((len (length dataset))
          (data-dimension (length (cdar dataset)))
          (target (make-array len :element-type 'fixnum))
-         (datamatrix (make-array (list len data-dimension) :element-type 'double-float)))
+         (datamatrix (make-array (list len data-dimension) :element-type 'single-float)))
     (loop for i from 0 below len
           for datum in dataset
           do (setf (aref target i) (car datum))
@@ -57,8 +58,8 @@
 (defun clol-dataset->datamatrix/target-regression (dataset)
   (let* ((len (length dataset))
          (data-dimension (length (cdar dataset)))
-         (target (make-array len :element-type 'double-float))
-         (datamatrix (make-array (list len data-dimension) :element-type 'double-float)))
+         (target (make-array len :element-type 'single-float))
+         (datamatrix (make-array (list len data-dimension) :element-type 'single-float)))
     (loop for i from 0 below len
           for datum in dataset
           do (setf (aref target i) (car datum))
@@ -77,8 +78,7 @@
                   (,iter (cddr ,inner-list)))))
        (,iter ,list))))
 
-
-;; Read from libsvm format data
+;;; Read from libsvm format dataset
 
 (defun read-data (data-path data-dimension)
   (multiple-value-bind (data-list dim)
@@ -87,14 +87,14 @@
            (len (length data-list))
            (target (make-array len :element-type 'fixnum :initial-element 0))
            (datamatrix (make-array (list len dim)
-                                   :element-type 'double-float
-                                   :initial-element 0d0)))
+                                   :element-type 'single-float
+                                   :initial-element 0.0)))
       (loop for i from 0
             for datum in data-list
             do
                (setf (aref target i) (1- (car datum)))
                (do-index-value-list (j v (cdr datum))
-                 (setf (aref datamatrix i (1- j)) (coerce v 'double-float))))
+                 (setf (aref datamatrix i (1- j)) (coerce v 'single-float))))
       (values datamatrix target))))
 
 (defun read-data-regression (data-path data-dimension)
@@ -102,19 +102,19 @@
       (svmformat:parse-file data-path)
     (let* ((dim (if data-dimension data-dimension dim))
            (len (length data-list))
-           (target (make-array len :element-type 'double-float :initial-element 0d0))
+           (target (make-array len :element-type 'single-float :initial-element 0.0))
            (datamatrix (make-array (list len dim)
-                                   :element-type 'double-float
-                                   :initial-element 0d0)))
+                                   :element-type 'single-float
+                                   :initial-element 0.0)))
       (loop for i from 0
             for datum in data-list
             do
-               (setf (aref target i) (coerce (car datum) 'double-float))
+               (setf (aref target i) (coerce (car datum) 'single-float))
                (do-index-value-list (j v (cdr datum))
-                 (setf (aref datamatrix i (1- j)) (coerce v 'double-float))))
+                 (setf (aref datamatrix i (1- j)) (coerce v 'single-float))))
       (values datamatrix target))))
 
-;;; write for R
+;;; Write for R format
 
 (defun format-datum (datum stream)
   (format stream "class~A" (car datum))

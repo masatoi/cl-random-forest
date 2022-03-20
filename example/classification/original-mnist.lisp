@@ -6,15 +6,15 @@
 
 ;;; Load Dataset ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; KMNIST data
-;; https://github.com/rois-codh/kmnist
-(defparameter dir (asdf:system-relative-pathname :cl-random-forest "dataset/kmnist/"))
+;; MNIST data
+;; http://yann.lecun.com/exdb/mnist/
+(defparameter dir (asdf:system-relative-pathname :cl-random-forest "dataset/mnist/"))
 (defparameter mnist-dim 784)
 (defparameter mnist-n-class 10)
 
 (defun get-mnist-dataset ()
   (ensure-directories-exist dir)
-  (let ((base-url "http://codh.rois.ac.jp/kmnist/dataset/kmnist"))
+  (let ((base-url "http://yann.lecun.com/exdb/mnist"))
     (flet ((download-file (filename)
              (uiop:run-program
               (format nil "cd ~A ; [ -e ~A ] || wget ~A/~A" dir filename base-url filename)))
