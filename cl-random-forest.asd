@@ -3,7 +3,7 @@
 (in-package :cl-random-forest-asd)
 
 (defsystem cl-random-forest
-  :version "0.20"
+  :version "0.2"
   :author "Satoshi Imai"
   :license "MIT Licence"
   :class :package-inferred-system
