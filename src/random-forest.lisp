@@ -7,6 +7,21 @@
            #:make-forest
            #:predict-forest
            #:test-forest
+           #:forest-bagging-ratio
+           #:forest-class-count-array
+           #:forest-datamatrix
+           #:forest-datum-dim
+           #:forest-dtree-list
+           #:forest-gain-test
+           #:forest-index-offset
+           #:forest-max-depth
+           #:forest-min-region-samples
+           #:forest-n-class
+           #:forest-n-leaf
+           #:forest-n-tree
+           #:forest-n-trial
+           #:forest-p
+           #:forest-target
            #:make-rtree
            #:predict-rtree
            #:test-rtree
