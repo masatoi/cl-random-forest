@@ -122,7 +122,6 @@
 
 (defun clean-dtree! (dtree)
   (setf (dtree-datamatrix dtree)  nil
-        (dtree-gain-test dtree)   nil
         (dtree-tmp-arr1 dtree)    nil
         (dtree-tmp-index1 dtree)  nil
         (dtree-tmp-arr2 dtree)    nil

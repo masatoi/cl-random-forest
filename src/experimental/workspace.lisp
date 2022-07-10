@@ -206,4 +206,4 @@
 (time (set-leaf-prediction mnist-dtree))
 
 
-(defun majority-voting (dtree data
+(defun majority-voting (dtree data))
