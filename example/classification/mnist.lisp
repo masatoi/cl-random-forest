@@ -2,7 +2,13 @@
 
 ;; set dynamic-space-size >= 2500
 
-(in-package :cl-random-forest)
+(defpackage :cl-random-forest/example/classification/mnist
+  (:use #:cl
+        #:cl-random-forest)
+  (:import-from #:cl-random-forest/src/utils
+                #:read-data))
+
+(in-package :cl-random-forest/example/classification/mnist)
 
 ;;; Load Dataset ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

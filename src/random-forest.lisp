@@ -36,7 +36,9 @@
            #:test-refine-learner
            #:train-refine-learner-process
            #:cross-validation-forest-with-refine-learner
-           #:pruning!))
+           #:pruning!
+           #:gini
+           #:entropy))
 
 (in-package :cl-random-forest/src/random-forest)
 
@@ -211,7 +213,7 @@
         (setf sum (+ sum
                      (if (= pk 0.0)
                          0.0
-                         (* pk (- 1.0 pk)))))))
+                         (* pk pk))))))
     (* -1.0 sum)))
 
 (defun entropy (sample-indices terminate-index dtree)
