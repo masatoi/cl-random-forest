@@ -83,7 +83,7 @@
                   (array-dimension datamatrix 0)))
          (dtree (%make-dtree
                  :n-class n-class
-                 :class-count-array (and n-class (make-array n-class :element-type 'single-float))
+                 :class-count-array (make-array n-class :element-type 'single-float)
                  :datum-dim (array-dimension datamatrix 1)
                  :datamatrix datamatrix
                  :target target
@@ -111,14 +111,37 @@
                         (remove-sample-indices? t)
                         (save-parent-node? nil)
                         sample-indices)
-  (make-dtree nil datamatrix target
-              :max-depth max-depth
-              :min-region-samples min-region-samples
-              :n-trial n-trial
-              :gain-test gain-test
-              :remove-sample-indices? remove-sample-indices?
-              :save-parent-node? save-parent-node?
-              :sample-indices sample-indices))
+  (check-type datamatrix (simple-array single-float))
+  (check-type target (simple-array single-float))
+  (check-type max-depth alexandria:positive-integer)
+  (check-type min-region-samples alexandria:positive-integer)
+  (check-type n-trial alexandria:positive-integer)
+  (assert (member gain-test (list #'variance)))
+
+  (let* ((len (if sample-indices
+                  (length sample-indices)
+                  (array-dimension datamatrix 0)))
+         (dtree (%make-dtree
+                 :datum-dim (array-dimension datamatrix 1)
+                 :datamatrix datamatrix
+                 :target target
+                 :max-depth max-depth :min-region-samples min-region-samples
+                 :n-trial n-trial
+                 :gain-test gain-test
+                 :remove-sample-indices? remove-sample-indices?
+                 :save-parent-node? save-parent-node?
+                 :tmp-arr1 (make-array len :element-type 'fixnum :initial-element 0)
+                 :tmp-index1 0
+                 :tmp-arr2 (make-array len :element-type 'fixnum :initial-element 0)
+                 :tmp-index2 0
+                 :best-arr1 (make-array len :element-type 'fixnum :initial-element 0)
+                 :best-index1 0
+                 :best-arr2 (make-array len :element-type 'fixnum :initial-element 0)
+                 :best-index2 0)))
+    (setf (dtree-root dtree) (make-root-node dtree :sample-indices sample-indices))
+    (split-node! (dtree-root dtree))
+    (clean-dtree! dtree)
+    dtree))
 
 (defun clean-dtree! (dtree)
   (setf (dtree-datamatrix dtree)  nil
@@ -248,7 +271,7 @@
            (type dtree rtree))
   (if (zerop terminate-index)
       0.0
-      (let ((len (* terminate-index 1.0.0))
+      (let ((len (* terminate-index 1.0))
             (target (dtree-target rtree))
             (sum 0.0))
         (declare (type (simple-array single-float) target)
@@ -280,10 +303,6 @@
         (cond ((< max elem) (setf max elem))
               ((> min elem) (setf min elem)))))
     (values min max)))
-
-;; Sampling from uniform distribution
-(defun random-uniform (start end)
-  (+ (random (- end start)) start))
 
 (defun make-random-test (node)
   (let* ((dtree (node-dtree node))
@@ -367,11 +386,13 @@
                  (right-gain (funcall gain-test (dtree-tmp-arr2 dtree) right-len dtree))
                  (parent-size (length (node-sample-indices node)))
                  (children-gain
-                   (if (not (rtree? dtree)) ; classification
+                   (if (not (rtree? dtree))
+                       ;; classification
                        (+ (* -1.0 (/ left-len parent-size)  left-gain)
                           (* -1.0 (/ right-len parent-size) right-gain))
                        ;; regression
-                       (+ (* -1.0 left-gain) (* -1.0 right-gain)))))
+                       (+ (* -1.0 left-gain)
+                          (* -1.0 right-gain)))))
             (when (< max-children-gain children-gain)
               (copy-tmp->best! dtree)
               (setf max-children-gain children-gain

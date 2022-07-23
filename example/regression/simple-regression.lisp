@@ -1,45 +1,44 @@
 ;; -*- coding:utf-8; mode:lisp -*-
 
-;; $ ros install masatoi/clgplot
-;; (ql:quickload :clgplot)
+(ql:quickload :clgplot)
 
-(in-package :clrf)
+(defpackage :cl-random-forest/example/regression/simple-regression
+  (:use #:cl
+        #:cl-random-forest)
+  (:import-from #:cl-random-forest/src/utils
+                #:random-uniform
+                #:random-normal))
 
-;; Sampling from Gaussian distribution (Box–Muller's method)
-(defun random-normal (&key (mean 0d0) (sd 1d0))
-  (let ((alpha (random 1.0d0))
-	(beta  (random 1.0d0)))
-    (+ (* sd
-	  (sqrt (* -2 (log alpha)))
-	  (sin (* 2 pi beta)))
-       mean)))
+(in-package :cl-random-forest/example/regression/simple-regression)
 
 ;;; sine curve  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defparameter *n* 100)
 
 (defparameter *datamatrix*
-  (let ((arr (make-array (list *n* 1) :element-type 'double-float)))
+  (let ((arr (make-array (list *n* 1) :element-type 'single-float))
+        (pi-float (coerce pi 'single-float)))
     (loop for i from 0 below *n* do
-      (setf (aref arr i 0) (random-uniform (- pi) pi)))
+      (setf (aref arr i 0) (random-uniform (- pi-float) pi-float)))
     arr))
 
 (defparameter *target*
-  (let ((arr (make-array *n* :element-type 'double-float)))
+  (let ((arr (make-array *n* :element-type 'single-float)))
     (loop for i from 0 below *n* do
       (setf (aref arr i) (+ (sin (aref *datamatrix* i 0))
-                            (random-normal :sd 0.1d0))))
+                            (random-normal :sd 0.1))))
     arr))
 
 (defparameter *test*
-  (let ((arr (make-array (list *n* 1) :element-type 'double-float)))
+  (let ((arr (make-array (list *n* 1) :element-type 'single-float))
+        (pi-float (coerce pi 'single-float)))
     (loop for i from 0 below *n*
-          for x from (- pi) to pi by (/ (* 2 pi) *n*)
+          for x from (- pi-float) to pi-float by (/ (* 2 pi-float) *n*)
           do (setf (aref arr i 0) x))
     arr))
 
 (defparameter *test-target*
-  (let ((arr (make-array *n* :element-type 'double-float)))
+  (let ((arr (make-array *n* :element-type 'single-float)))
     (loop for i from 0 below *n* do
       (setf (aref arr i) (sin (aref *test* i 0))))
     arr))
@@ -78,19 +77,18 @@
                           :n-tree 100 :bagging-ratio 0.6
                           :max-depth 5 :min-region-samples 5 :n-trial 10))
 
-;; (let ((x-sample-lst (slice *datamatrix*))
-;;       (x-lst (slice *test*)))
-;;   (clgp:plots
-;;    (list *target*
-;;          *test-target*
-;;          (loop for i from 0 below *n* collect (predict-rtree *rtree* *test* i))
-;;          (loop for i from 0 below *n* collect (predict-regression-forest *rforest* *test* i)))
-;;    :x-seqs (list x-sample-lst x-lst x-lst x-lst)
-;;    :style '(points lines lines lines)
-;;    :title-list '("training-data" "true" "predict(dtree)" "predict(forest)")
-;;    ;; :output "/home/wiz/Dropbox/tmp/regression-forest.png"
-;;    :x-range '(-3.3 3.3)
-;;    :y-range '(-1.5 2.0)))
+(let ((x-sample-lst (slice *datamatrix*))
+      (x-lst (slice *test*)))
+  (clgp:plots
+   (list *target*
+         *test-target*
+         (loop for i from 0 below *n* collect (predict-rtree *rtree* *test* i))
+         (loop for i from 0 below *n* collect (predict-regression-forest *rforest* *test* i)))
+   :x-seqs (list x-sample-lst x-lst x-lst x-lst)
+   :style '(points lines lines lines)
+   :title-list '("training-data" "true" "predict(dtree)" "predict(forest)")
+   :x-range '(-3.3 3.3)
+   :y-range '(-1.5 2.0)))
 
 ;; test by training data
 (test-regression-forest *rforest* *datamatrix* *target*)
@@ -104,7 +102,7 @@
                           :n-tree 500 :bagging-ratio 0.1
                           :max-depth 5 :min-region-samples 2 :n-trial 10))
 
-(defparameter *refine-learner* (make-regression-refine-learner *rforest* 1d0))
+(defparameter *refine-learner* (make-regression-refine-learner *rforest* 1.0))
 (defparameter *refine-dataset* (make-regression-refine-dataset *rforest* *datamatrix*))
 (defparameter *refine-testset* (make-regression-refine-dataset *rforest* *test*))
 

@@ -1,7 +1,9 @@
 (defpackage :cl-random-forest/src/utils
   (:use :cl)
   (:nicknames :cl-random-forest.utils :clrf.utils)
-  (:export #:dotimes/pdotimes
+  (:export #:random-uniform
+           #:random-normal
+           #:dotimes/pdotimes
            #:mapcar/pmapcar
            #:mapc/pmapc
            #:push-ntimes
@@ -13,7 +15,24 @@
 
 (in-package :cl-random-forest/src/utils)
 
-;;; parallelizaion utils
+;;; Sampling
+
+;; Sampling from uniform distribution
+(defun random-uniform (start end)
+  (+ (random (- end start)) start))
+
+;; Sampling from Gaussian distribution (Box–Muller's method)
+(defun random-normal (&key (mean 0.0) (sd 1.0))
+  (let ((alpha (random 1.0))
+	(beta  (random 1.0)))
+    (coerce
+     (+ (* sd
+	   (sqrt (* -2 (log alpha)))
+	   (sin (* 2 pi beta)))
+        mean)
+     'single-float)))
+
+;;; Parallelizaion utils
 
 (defmacro dotimes/pdotimes ((var n) &body body)
   `(if lparallel:*kernel*
