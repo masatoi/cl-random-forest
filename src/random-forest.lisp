@@ -28,17 +28,22 @@
            #:make-regression-forest
            #:predict-regression-forest
            #:test-regression-forest
-           #:make-refine-vector
            #:make-refine-learner
            #:predict-refine-learner
            #:make-refine-dataset
            #:train-refine-learner
            #:test-refine-learner
+           #:make-regression-refine-learner
+           #:predict-regression-refine-learner
+           #:make-regression-refine-dataset
+           #:train-regression-refine-learner
+           #:test-regression-refine-learner
            #:train-refine-learner-process
            #:cross-validation-forest-with-refine-learner
            #:pruning!
            #:gini
-           #:entropy))
+           #:entropy
+           #:variance))
 
 (in-package :cl-random-forest/src/random-forest)
 

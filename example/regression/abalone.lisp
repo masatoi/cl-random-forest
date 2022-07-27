@@ -1,6 +1,12 @@
 ;; -*- coding:utf-8; mode:lisp -*-
 
-(in-package :clrf)
+(defpackage :cl-random-forest/example/regression/abalone
+  (:use #:cl
+        #:cl-random-forest)
+  (:import-from #:cl-random-forest/src/utils
+                #:read-data-regression))
+
+(in-package :cl-random-forest/example/regression/abalone)
 
 ;;; abalone
 ;; https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/regression.html#abalone
@@ -33,3 +39,21 @@
 
 (test-regression-forest rforest test-datamatrix test-target)
 ;; RMSE: 2.208641788206514d0
+
+;;; Global refinement
+
+(defparameter rforest-500-tree
+  (make-regression-forest datamatrix target
+                          :n-tree 500 :max-depth 5 :bagging-ratio 0.1 :n-trial 10))
+
+(test-regression-forest rforest-500-tree test-datamatrix test-target)
+;; RMSE: 2.3859577
+
+(defparameter refine-learner (make-regression-refine-learner rforest-500-tree 0.9999))
+
+(defparameter refine-dataset (make-regression-refine-dataset rforest-500-tree datamatrix))
+(defparameter refine-testset (make-regression-refine-dataset rforest-500-tree test-datamatrix))
+
+(loop repeat 100 do
+  (train-regression-refine-learner refine-learner refine-dataset target)
+  (test-regression-refine-learner refine-learner refine-testset test-target))
