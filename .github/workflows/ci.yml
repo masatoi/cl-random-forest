@@ -28,7 +28,9 @@ jobs:
           curl -L https://raw.githubusercontent.com/roswell/roswell/master/scripts/install-for-ci.sh | sh
       - name: Install Rove and dependencies
         run: ros install rove lparallel trivial-garbage masatoi/cl-libsvm-format masatoi/cl-online-learning
+      # Use the project's own runner rather than rove's `rove <system>.asd` script.
+      # That script mutes *standard-output* and routes rove's report through a
+      # synonym-stream lookup that does not resolve the same way on CCL, so the
+      # CCL job produced no output at all and its exit code was the only signal.
       - name: Run tests
-        run: |
-          PATH="~/.roswell/bin:$PATH"
-          rove cl-random-forest-test.asd
+        run: ./t/run-test.ros

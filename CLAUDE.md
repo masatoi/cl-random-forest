@@ -39,9 +39,14 @@ Run the test suite (rove-based):
 ```
 
 ```sh
-./t/run-test.ros                   # same, via roswell with dynamic-space-size=2048
-rove cl-random-forest-test.asd     # what CI runs
+./t/run-test.ros                   # what CI runs; roswell with dynamic-space-size=2048
+rove cl-random-forest-test.asd     # rove's own runner -- prints nothing under CCL, see below
 ```
+
+`rove <system>.asd` mutes `*standard-output*` and routes rove's report through a
+synonym-stream lookup that resolves differently on CCL, so under CCL it runs the suite but
+prints nothing and the exit code is the only signal. CI uses `./t/run-test.ros` for that
+reason; prefer it when you need to see results.
 
 Tests are split into feature systems, each of which can be run on its own:
 
