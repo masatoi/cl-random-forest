@@ -133,7 +133,7 @@ fixture はアサーションを持たないので rove に依存しない。
 
 ```lisp
 (defsystem "cl-random-forest-test/fixture"
-  :depends-on ("cl-random-forest" "cl-libsvm-format" "uiop" "trivial-garbage" "lparallel")
+  :depends-on ("cl-random-forest" "cl-online-learning" "uiop" "trivial-garbage" "lparallel")
   :components ((:module "t" :components ((:file "fixture")))))
 ```
 

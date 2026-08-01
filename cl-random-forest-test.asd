@@ -13,31 +13,41 @@
   :description "Tests for dataset download and conversion to datamatrix/target"
   :depends-on ("rove" "cl-random-forest-test/fixture")
   :components ((:module "t" :components ((:file "dataset"))))
-  :perform (test-op (o c) (declare (ignore o)) (symbol-call :rove :run c)))
+  :perform (test-op (o c) (declare (ignore o))
+             (unless (symbol-call :rove :run c)
+               (error "Tests failed."))))
 
 (defsystem "cl-random-forest-test/decision-tree"
   :description "Accuracy tests for decision trees"
   :depends-on ("rove" "cl-random-forest-test/fixture")
   :components ((:module "t" :components ((:file "decision-tree"))))
-  :perform (test-op (o c) (declare (ignore o)) (symbol-call :rove :run c)))
+  :perform (test-op (o c) (declare (ignore o))
+             (unless (symbol-call :rove :run c)
+               (error "Tests failed."))))
 
 (defsystem "cl-random-forest-test/forest"
   :description "Accuracy tests for random forests"
   :depends-on ("rove" "cl-random-forest-test/fixture")
   :components ((:module "t" :components ((:file "forest"))))
-  :perform (test-op (o c) (declare (ignore o)) (symbol-call :rove :run c)))
+  :perform (test-op (o c) (declare (ignore o))
+             (unless (symbol-call :rove :run c)
+               (error "Tests failed."))))
 
 (defsystem "cl-random-forest-test/refinement"
   :description "Accuracy tests for global refinement"
   :depends-on ("rove" "cl-random-forest-test/fixture")
   :components ((:module "t" :components ((:file "refinement"))))
-  :perform (test-op (o c) (declare (ignore o)) (symbol-call :rove :run c)))
+  :perform (test-op (o c) (declare (ignore o))
+             (unless (symbol-call :rove :run c)
+               (error "Tests failed."))))
 
 (defsystem "cl-random-forest-test/parallel"
   :description "Accuracy tests for parallelized training (SBCL only)"
   :depends-on ("rove" "cl-random-forest-test/fixture")
   :components ((:module "t" :components ((:file "parallel"))))
-  :perform (test-op (o c) (declare (ignore o)) (symbol-call :rove :run c)))
+  :perform (test-op (o c) (declare (ignore o))
+             (unless (symbol-call :rove :run c)
+               (error "Tests failed."))))
 
 (defsystem "cl-random-forest-test"
   :author "Satoshi Imai"
