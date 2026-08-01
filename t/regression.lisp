@@ -69,18 +69,31 @@
   ;; grows as (1/gamma)^updates and overflows single-float. Measured: NaN at epoch
   ;; 9 with 1000 training data. This test pins the current behaviour -- when it
   ;; starts FAILING, the default has been fixed and this test should be deleted.
+  ;;
+  ;; How the overflow surfaces is platform-dependent: aarch64 SBCL and CCL do not
+  ;; trap floating-point overflow by default, so the covariance quietly becomes
+  ;; NaN and the (/= rmse rmse) check below catches it. x86-64 SBCL traps
+  ;; overflow and signals FLOATING-POINT-OVERFLOW (a subtype of ARITHMETIC-ERROR)
+  ;; before any NaN is ever observed. Both are the same divergence, so this test
+  ;; accepts either manifestation.
   (multiple-value-bind (datamatrix target) (synthetic-regression-train)
     (let* ((forest (trained-forest))
            (refine-train (make-regression-refine-dataset forest datamatrix))
            (learner (make-regression-refine-learner forest)) ; default gamma 0.99
-           (diverged-at nil))
-      (dotimes (epoch 12)
-        (train-regression-refine-learner learner refine-train target)
-        (let ((rmse (test-regression-refine-learner learner refine-train target
-                                                    :quiet-p t)))
-          (when (/= rmse rmse)          ; NaN is the only float not equal to itself
-            (setf diverged-at (1+ epoch))
-            (return))))
+           (diverged-at nil)
+           (epochs-run 0))
+      (handler-case
+          (dotimes (epoch 12)
+            (train-regression-refine-learner learner refine-train target)
+            (setf epochs-run (1+ epoch))
+            (let ((rmse (test-regression-refine-learner learner refine-train target
+                                                        :quiet-p t)))
+              (when (/= rmse rmse)      ; NaN is the only float not equal to itself
+                (setf diverged-at (format nil "NaN at epoch ~D" epochs-run))
+                (return))))
+        (arithmetic-error (condition)
+          (setf diverged-at (format nil "~A at epoch ~D" (type-of condition)
+                                    (1+ epochs-run)))))
       (ok diverged-at
-          (format nil "default gamma 0.99 produced NaN at epoch ~A (expected within 12)"
-                  diverged-at)))))
+          (format nil "default gamma 0.99 diverged: ~A (expected within 12 epochs)"
+                  (or diverged-at "it did not diverge"))))))
