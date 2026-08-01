@@ -7,9 +7,17 @@ jobs:
     name: ${{ matrix.lisp }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      # Run every combination to completion; one broken target should not hide
+      # the results of the others.
+      fail-fast: false
       matrix:
         lisp: [sbcl-bin, ccl-bin]
         os: [ubuntu-latest, macOS-latest]
+        exclude:
+          # Roswell fails with "unable to use 'ccl-bin'" here -- macOS CCL
+          # binaries are no longer distributed.
+          - lisp: ccl-bin
+            os: macOS-latest
 
     steps:
       - uses: actions/checkout@v1
