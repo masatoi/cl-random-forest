@@ -57,8 +57,10 @@ Tests are split into feature systems, each of which can be run on its own:
 | `cl-random-forest-test/forest` | random forest accuracy (2) |
 | `cl-random-forest-test/refinement` | global refinement accuracy (2) |
 | `cl-random-forest-test/parallel` | parallelized training accuracy (4, SBCL only) |
+| `cl-random-forest-test/regression` | univariate regression behaviour (5) |
+| `cl-random-forest-test/pruning` | global pruning behaviour (5) |
 
-`cl-random-forest-test` is the aggregate that runs all five.
+`cl-random-forest-test` is the aggregate that runs all seven.
 `cl-random-forest-test/fixture` holds the shared dataset loaders and helpers and has no tests.
 
 Load the feature system first (`ql:quickload` or `asdf:load-system`), then:
@@ -72,6 +74,14 @@ There is no lint step. CI (`.github/workflows/ci.yml`) runs the matrix
 {sbcl-bin, ccl-bin} × {ubuntu-latest, macOS-latest}.
 
 Test/example caveats:
+- `cl-random-forest-test/regression` and `.../pruning` use deterministic synthetic data from
+  `cl-random-forest-test/fixture` and need no network. Everything else downloads datasets.
+- Five of those tests are **property assertions**, not pinned accuracy numbers, and three
+  deliberately pin bugs that are still open: `regression-refine-learner-default-gamma-diverges`
+  (issue #16), `pruning-strands-leaves-without-sample-indices` (issue #14) and
+  `pruning-does-not-update-forest-n-leaf` (issue #15). Each says so in a comment. When one of
+  them starts **failing**, the underlying bug has been fixed and the test should be replaced by
+  a positive assertion rather than "repaired".
 - Datasets are loaded lazily and memoized in `cl-random-forest-test/fixture`, so any single
   test can be run on its own and will fetch only what it needs.
 - The tests **download datasets over the network** (`wget` on the `PATH`) into `dataset/` under
