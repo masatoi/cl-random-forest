@@ -6,4 +6,15 @@ exec ros -Q dynamic-space-size=2048 -- $0 "$@"
 
 (defun main (&rest argv)
   (declare (ignorable argv))
-  (asdf:test-system :cl-random-forest))
+  ;; Do not let a failing suite reach the interactive debugger. CCL does, and
+  ;; then exits 0 when its stdin hits EOF, so CI went green with a red test.
+  ;; Catch SERIOUS-CONDITION, not just ERROR: the suite builds 500-tree forests
+  ;; under dynamic-space-size=2048, so SB-KERNEL::HEAP-EXHAUSTED-ERROR (a
+  ;; STORAGE-CONDITION) is a real possibility, and SB-SYS:INTERACTIVE-INTERRUPT
+  ;; (from SIGINT) is another -- both are SERIOUS-CONDITION but not ERROR, so
+  ;; they would otherwise escape into the debugger and reopen the exact
+  ;; green-CI-with-a-red-suite failure this file exists to prevent.
+  (handler-case (asdf:test-system :cl-random-forest)
+    (serious-condition (condition)
+      (format *error-output* "~&~A~%" condition)
+      (uiop:quit 1))))

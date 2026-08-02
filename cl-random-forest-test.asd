@@ -49,6 +49,22 @@
              (unless (symbol-call :rove :run c)
                (error "Tests failed."))))
 
+(defsystem "cl-random-forest-test/regression"
+  :description "Behaviour tests for univariate regression"
+  :depends-on ("rove" "cl-random-forest-test/fixture")
+  :components ((:module "t" :components ((:file "regression"))))
+  :perform (test-op (o c) (declare (ignore o))
+             (unless (symbol-call :rove :run c)
+               (error "Tests failed."))))
+
+(defsystem "cl-random-forest-test/pruning"
+  :description "Behaviour tests for global pruning"
+  :depends-on ("rove" "cl-random-forest-test/fixture")
+  :components ((:module "t" :components ((:file "pruning"))))
+  :perform (test-op (o c) (declare (ignore o))
+             (unless (symbol-call :rove :run c)
+               (error "Tests failed."))))
+
 (defsystem "cl-random-forest-test"
   :author "Satoshi Imai"
   :license "MIT Licence"
@@ -58,7 +74,9 @@
                "cl-random-forest-test/decision-tree"
                "cl-random-forest-test/forest"
                "cl-random-forest-test/refinement"
-               "cl-random-forest-test/parallel")
+               "cl-random-forest-test/parallel"
+               "cl-random-forest-test/regression"
+               "cl-random-forest-test/pruning")
   ;; NOTE: This system has no components of its own, so rove's SYSTEM-SUITES would
   ;; return an empty list and (rove:run c) would silently report zero tests.
   ;; The feature systems must be listed explicitly.
@@ -69,5 +87,7 @@
                                     "cl-random-forest-test/decision-tree"
                                     "cl-random-forest-test/forest"
                                     "cl-random-forest-test/refinement"
-                                    "cl-random-forest-test/parallel"))
+                                    "cl-random-forest-test/parallel"
+                                    "cl-random-forest-test/regression"
+                                    "cl-random-forest-test/pruning"))
                (error "Tests failed."))))

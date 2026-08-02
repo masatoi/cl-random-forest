@@ -17,7 +17,13 @@
            :approximately-equal
            :n-times-average
            :with-serial-kernel
-           :with-parallel-kernel))
+           :with-parallel-kernel
+           :+synthetic-n-class+
+           :synthetic-regression-train
+           :synthetic-regression-test
+           :synthetic-classification-train
+           :synthetic-classification-test
+           :target-stddev))
 (in-package :cl-random-forest-test/fixture)
 
 ;;;; Dataset location
@@ -165,3 +171,100 @@ The a9a labels are +1/-1; they are remapped to class ids 0/1."
   `(let ((lparallel:*kernel* (lparallel:make-kernel ,n)))
      (unwind-protect (progn ,@body)
        (lparallel:end-kernel :wait t))))
+
+;;;; Synthetic datasets
+;;;
+;;; These need no network, so a suite built on them runs offline and in seconds.
+;;; Each generator seeds its own LCG rather than sharing one: a suite has to see
+;;; the same data whether it runs on its own or inside the full run, so the
+;;; sequence must not depend on what else was generated first.
+
+(defconstant +synthetic-n-class+ 4)
+
+(defun make-lcg (seed)
+  "Return a closure yielding a deterministic pseudo-random single-float in [0,1)."
+  (let ((state seed))
+    (lambda ()
+      (setf state (mod (+ (* 1103515245 state) 12345) 2147483648))
+      (/ (float state 1.0) 2147483648.0))))
+
+(defun lcg-noise (rnd)
+  "Roughly normal noise in [-3,3), summed from three uniform draws of RND."
+  (* 2.0 (- (+ (funcall rnd) (funcall rnd) (funcall rnd)) 1.5)))
+
+(defun generate-regression (seed n-datum n-dim)
+  "Return (values datamatrix target) for y = 3*x0 - 2*x1 + x2^2 + 0.5*x3 + small noise.
+Features are uniform over [-1,1)."
+  (let ((rnd (make-lcg seed))
+        (datamatrix (make-array (list n-datum n-dim) :element-type 'single-float))
+        (target (make-array n-datum :element-type 'single-float)))
+    (dotimes (i n-datum)
+      (dotimes (j n-dim)
+        (setf (aref datamatrix i j) (float (- (* 2.0 (funcall rnd)) 1.0) 1.0)))
+      (setf (aref target i)
+            (float (+ (* 3.0 (aref datamatrix i 0))
+                      (* -2.0 (aref datamatrix i 1))
+                      (expt (aref datamatrix i 2) 2)
+                      (* 0.5 (aref datamatrix i 3))
+                      (* 0.1 (lcg-noise rnd)))
+                   1.0)))
+    (values datamatrix target)))
+
+(defun generate-classification (seed n-datum n-dim n-class signal)
+  "Return (values datamatrix target). Class C gets SIGNAL added to every feature J
+where (mod J N-CLASS) equals C; every other feature is noise alone."
+  (let ((rnd (make-lcg seed))
+        (datamatrix (make-array (list n-datum n-dim) :element-type 'single-float))
+        (target (make-array n-datum :element-type 'fixnum)))
+    (dotimes (i n-datum)
+      (let ((class (mod i n-class)))
+        (setf (aref target i) class)
+        (dotimes (j n-dim)
+          (setf (aref datamatrix i j)
+                (+ (lcg-noise rnd) (if (= (mod j n-class) class) signal 0.0))))))
+    (values datamatrix target)))
+
+(defvar *synthetic-regression-train-cache* nil)
+(defvar *synthetic-regression-test-cache* nil)
+(defvar *synthetic-classification-train-cache* nil)
+(defvar *synthetic-classification-test-cache* nil)
+
+(defun synthetic-regression-train ()
+  "Return (values datamatrix target) for the synthetic regression training set."
+  (unless *synthetic-regression-train-cache*
+    (multiple-value-bind (datamatrix target) (generate-regression 42 1000 6)
+      (setf *synthetic-regression-train-cache* (cons datamatrix target))))
+  (values (car *synthetic-regression-train-cache*)
+          (cdr *synthetic-regression-train-cache*)))
+
+(defun synthetic-regression-test ()
+  "Return (values datamatrix target) for the synthetic regression test set."
+  (unless *synthetic-regression-test-cache*
+    (multiple-value-bind (datamatrix target) (generate-regression 43 500 6)
+      (setf *synthetic-regression-test-cache* (cons datamatrix target))))
+  (values (car *synthetic-regression-test-cache*)
+          (cdr *synthetic-regression-test-cache*)))
+
+(defun synthetic-classification-train ()
+  "Return (values datamatrix target) for the synthetic classification training set."
+  (unless *synthetic-classification-train-cache*
+    (multiple-value-bind (datamatrix target)
+        (generate-classification 44 1500 12 +synthetic-n-class+ 1.5)
+      (setf *synthetic-classification-train-cache* (cons datamatrix target))))
+  (values (car *synthetic-classification-train-cache*)
+          (cdr *synthetic-classification-train-cache*)))
+
+(defun synthetic-classification-test ()
+  "Return (values datamatrix target) for the synthetic classification test set."
+  (unless *synthetic-classification-test-cache*
+    (multiple-value-bind (datamatrix target)
+        (generate-classification 45 600 12 +synthetic-n-class+ 1.5)
+      (setf *synthetic-classification-test-cache* (cons datamatrix target))))
+  (values (car *synthetic-classification-test-cache*)
+          (cdr *synthetic-classification-test-cache*)))
+
+(defun target-stddev (target)
+  "Standard deviation of TARGET -- the RMSE a constant predictor would achieve."
+  (let* ((n (length target))
+         (mean (/ (reduce #'+ target) n)))
+    (sqrt (/ (reduce #'+ (map 'vector (lambda (y) (expt (- y mean) 2)) target)) n))))
