@@ -6,4 +6,9 @@ exec ros -Q dynamic-space-size=2048 -- $0 "$@"
 
 (defun main (&rest argv)
   (declare (ignorable argv))
-  (asdf:test-system :cl-random-forest))
+  ;; Do not let a failing suite reach the interactive debugger. CCL does, and
+  ;; then exits 0 when its stdin hits EOF, so CI went green with a red test.
+  (handler-case (asdf:test-system :cl-random-forest)
+    (error (condition)
+      (format *error-output* "~&~A~%" condition)
+      (uiop:quit 1))))

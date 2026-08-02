@@ -4,7 +4,10 @@
   (:use :cl :rove :cl-random-forest :cl-random-forest-test/fixture)
   (:import-from #:cl-random-forest/src/random-forest
                 #:dtree-max-leaf-index
-                #:collect-leaf-parent))
+                #:collect-leaf-parent
+                #:do-leaf
+                #:node-sample-indices
+                #:dtree-root))
 (in-package :cl-random-forest-test/pruning)
 
 (defun leaf-count (forest)
@@ -79,22 +82,42 @@ goes stale the moment anything prunes the forest (issue #15)."
           (ok (< (abs (- after before)) 5.0)
               (format nil "forest accuracy ~,4F -> ~,4F after pruning" before after)))))))
 
-(deftest pruning-breaks-test-forest-with-default-flags
+(defun leaves-without-sample-indices (forest)
+  "Count the leaves in FOREST whose NODE-SAMPLE-INDICES is NIL.
+NODE-CLASS-DISTRIBUTION recomputes a leaf's distribution from those indices on
+every prediction, so a leaf without them cannot answer a query."
+  (let ((count 0))
+    (dolist (dtree (forest-dtree-list forest))
+      (do-leaf (lambda (node)
+                 (unless (node-sample-indices node) (incf count)))
+        (dtree-root dtree)))
+    count))
+
+(deftest pruning-strands-leaves-without-sample-indices
   ;; KNOWN BUG (issue #14): set-best-children! nils node-sample-indices on every
   ;; node it splits when :remove-sample-indices? is t -- the default -- and
   ;; delete-children! turns such a node back into a leaf without restoring them.
-  ;; node-class-distribution then receives NIL where it declares
-  ;; (simple-array fixnum). This test pins the current behaviour -- when it starts
-  ;; FAILING, the bug has been fixed and this test should be replaced by a
-  ;; positive assertion.
-  (multiple-value-bind (datamatrix-test target-test) (synthetic-classification-test)
-    (multiple-value-bind (forest learner) (trained-forest-and-learner) ; default flags
-      (pruning! forest learner 0.2)
-      (ok (handler-case (progn (test-forest forest datamatrix-test target-test
-                                            :quiet-p t)
-                               nil)
-            (type-error () t))
-          "test-forest signals a type-error after pruning a default-built forest"))))
+  ;; Every pruned parent therefore becomes a leaf that cannot answer a query.
+  ;;
+  ;; How that surfaces is implementation-dependent: SBCL checks the
+  ;; (simple-array fixnum) declaration in class-distribution and signals a
+  ;; type-error, while CCL does not check it, quietly returns a zero
+  ;; distribution, and gives a wrong answer instead of a loud one. So this test
+  ;; asserts the mechanism rather than either symptom.
+  ;;
+  ;; This test pins the current behaviour -- when it starts FAILING, the bug has
+  ;; been fixed and this test should be replaced by a positive assertion.
+  (multiple-value-bind (forest learner) (trained-forest-and-learner) ; default flags
+    (let* ((rate 0.2)
+           (n-parents (length (collect-leaf-parent forest)))
+           (expected (floor (* n-parents rate))))
+      (ok (zerop (leaves-without-sample-indices forest))
+          "before pruning, every leaf carries its sample indices")
+      (pruning! forest learner rate)
+      (let ((stranded (leaves-without-sample-indices forest)))
+        (ok (= stranded expected)
+            (format nil "after pruning, ~D leaves have no sample indices = the ~D parents pruned"
+                    stranded expected))))))
 
 (deftest pruning-does-not-update-forest-n-leaf
   ;; KNOWN BUG (issue #15): forest-n-leaf is written only by make-forest and
