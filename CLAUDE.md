@@ -76,7 +76,7 @@ There is no lint step. CI (`.github/workflows/ci.yml`) runs the matrix
 Test/example caveats:
 - `cl-random-forest-test/regression` and `.../pruning` use deterministic synthetic data from
   `cl-random-forest-test/fixture` and need no network. Everything else downloads datasets.
-- Five of those tests are **property assertions**, not pinned accuracy numbers, and three
+- Seven of those tests are **property assertions**, not pinned accuracy numbers, and three
   deliberately pin bugs that are still open: `regression-refine-learner-default-gamma-diverges`
   (issue #16), `pruning-strands-leaves-without-sample-indices` (issue #14) and
   `pruning-does-not-update-forest-n-leaf` (issue #15). Each says so in a comment. When one of
@@ -86,8 +86,8 @@ Test/example caveats:
   test can be run on its own and will fetch only what it needs.
 - The tests **download datasets over the network** (`wget` on the `PATH`) into `dataset/` under
   the system directory (gitignored). Same for most `example/` files.
-- Tests are accuracy assertions with a `±1.0` tolerance over averaged runs — they are slow
-  (500-tree forests, repeated 5–10×) and inherently stochastic.
+- The five dataset-driven suites are accuracy assertions with a `±1.0` tolerance over averaged
+  runs — they are slow (500-tree forests, repeated 5–10×) and inherently stochastic.
 - Some examples need `dynamic-space-size >= 2500` (noted in their headers); start SBCL via
   `ros -Q dynamic-space-size=4096`.
 

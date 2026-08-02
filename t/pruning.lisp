@@ -29,6 +29,17 @@ goes stale the moment anything prunes the forest (issue #15)."
         (train-refine-learner learner refine-dataset target))
       (values forest learner))))
 
+(defun leaves-without-sample-indices (forest)
+  "Count the leaves in FOREST whose NODE-SAMPLE-INDICES is NIL.
+NODE-CLASS-DISTRIBUTION recomputes a leaf's distribution from those indices on
+every prediction, so a leaf without them cannot answer a query."
+  (let ((count 0))
+    (dolist (dtree (forest-dtree-list forest))
+      (do-leaf (lambda (node)
+                 (unless (node-sample-indices node) (incf count)))
+        (dtree-root dtree)))
+    count))
+
 (deftest pruning-reduces-leaf-count
   (multiple-value-bind (forest learner) (trained-forest-and-learner)
     (let* ((rate 0.2)
@@ -44,6 +55,11 @@ goes stale the moment anything prunes the forest (issue #15)."
         ;; leaves. Each pruned parent loses its two children and becomes a leaf
         ;; itself, so exactly one leaf goes per parent. The README says otherwise
         ;; -- see issue #18. Verified exact at rates 0.1, 0.2 and 0.5.
+        ;;
+        ;; Exact because no leaf-parent here sits at depth 0: pruning! skips any
+        ;; candidate shallower than min-depth (default 1), i.e. a root that split
+        ;; once and stopped. Measured 0 such parents across 14 forest builds at
+        ;; these fixture settings; lowering :max-depth could change that.
         (ok (= deleted expected)
             (format nil "deleted ~D leaves = floor(~D leaf-parents * ~A) = ~D"
                     deleted n-parents rate expected))))))
@@ -80,18 +96,13 @@ goes stale the moment anything prunes the forest (issue #15)."
           (ok (numberp after)
               "test-forest still returns an accuracy after pruning")
           (ok (< (abs (- after before)) 5.0)
-              (format nil "forest accuracy ~,4F -> ~,4F after pruning" before after)))))))
-
-(defun leaves-without-sample-indices (forest)
-  "Count the leaves in FOREST whose NODE-SAMPLE-INDICES is NIL.
-NODE-CLASS-DISTRIBUTION recomputes a leaf's distribution from those indices on
-every prediction, so a leaf without them cannot answer a query."
-  (let ((count 0))
-    (dolist (dtree (forest-dtree-list forest))
-      (do-leaf (lambda (node)
-                 (unless (node-sample-indices node) (incf count)))
-        (dtree-root dtree)))
-    count))
+              (format nil "forest accuracy ~,4F -> ~,4F after pruning" before after))
+          ;; The accuracy comparison alone has teeth only where a stranded leaf
+          ;; signals. SBCL checks class-distribution's (simple-array fixnum)
+          ;; declaration and does; CCL does not, and would return a quietly wrong
+          ;; number instead. Assert the mechanism too.
+          (ok (zerop (leaves-without-sample-indices forest))
+              "no leaf was stranded, because the forest kept its sample indices"))))))
 
 (deftest pruning-strands-leaves-without-sample-indices
   ;; KNOWN BUG (issue #14): set-best-children! nils node-sample-indices on every
@@ -115,6 +126,10 @@ every prediction, so a leaf without them cannot answer a query."
           "before pruning, every leaf carries its sample indices")
       (pruning! forest learner rate)
       (let ((stranded (leaves-without-sample-indices forest)))
+        ;; Exact because no leaf-parent here sits at depth 0: pruning! skips any
+        ;; candidate shallower than min-depth (default 1), i.e. a root that split
+        ;; once and stopped. Measured 0 such parents across 14 forest builds at
+        ;; these fixture settings; lowering :max-depth could change that.
         (ok (= stranded expected)
             (format nil "after pruning, ~D leaves have no sample indices = the ~D parents pruned"
                     stranded expected))))))
