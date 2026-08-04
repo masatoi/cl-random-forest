@@ -74,9 +74,9 @@ There is no lint step. CI (`.github/workflows/ci.yml`) runs the matrix
 {sbcl-bin, ccl-bin} × {ubuntu-latest, macOS-latest}.
 
 Test/example caveats:
-- `cl-random-forest-test/regression`、`.../pruning`、および `.../refinement` の
-  `refine-learner-*` 4 テストは `cl-random-forest-test/fixture` の決定的な合成データを
-  使うのでネットワーク不要。それ以外はデータセットをダウンロードする。
+- `cl-random-forest-test/regression`, `.../pruning`, and the four `refine-learner-*` tests in
+  `.../refinement` use `cl-random-forest-test/fixture`'s deterministic synthetic data and need
+  no network. Everything else downloads datasets.
 - Seven of those tests are **property assertions**, not pinned accuracy numbers, and three
   deliberately pin bugs that are still open: `regression-refine-learner-default-gamma-diverges`
   (issue #16), `pruning-strands-leaves-without-sample-indices` (issue #14) and
