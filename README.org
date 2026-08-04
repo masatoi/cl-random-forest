@@ -150,6 +150,8 @@ This TRAIN-REFINE-LEARNER function can be used to learn the dataset collectively
                               *forest-refine-dev-dataset* *dev-target*)
 #+END_SRC
 
+MAKE-REFINE-LEARNER always builds a sparse AROW learner (a multiclass forest gets a ONE-VS-REST of them). To use a different multiclass learner type from cl-online-learning instead -- SPARSE-LR+FTRL, say, for L1-sparse weights -- call MAKE-REFINE-LEARNER-OF-TYPE with the learner type symbol and its constructor arguments in place of MAKE-REFINE-LEARNER; everything downstream (TRAIN-REFINE-LEARNER, TEST-REFINE-LEARNER, PRUNING!) works the same way.
+
 **** Global Pruning of Random Forest
 
 ***** Pruning

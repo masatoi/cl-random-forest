@@ -155,7 +155,10 @@ weights child gains by sample-count ratio, regression does not.
 `make-refine-dataset` maps each datum to the vector of leaf indices it reaches, one per tree,
 offset into a single global index space via `forest-index-offset` (cumulative
 `dtree-max-leaf-index`). That vector is fed to `cl-online-learning` as a sparse vector:
-sparse AROW for binary, `one-vs-rest` of sparse AROWs for multiclass, sparse RLS for regression.
+`make-refine-learner`'s default is sparse AROW for binary, `one-vs-rest` of sparse AROWs for
+multiclass, sparse RLS for regression. `make-refine-learner-of-type` swaps in any other
+`cl-online-learning` multiclass sparse learner (e.g. `sparse-lr+ftrl`, for L1-sparse weights) in
+place of AROW; it is multiclass-only, since `one-vs-rest` needs more than 2 classes.
 `train-refine-learner` is one epoch; `train-refine-learner-process` loops until dev accuracy stops
 improving (and is a **macro** — it `setf`s its first argument).
 
