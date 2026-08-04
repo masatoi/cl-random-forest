@@ -10,11 +10,14 @@
 ;;; when w_L = w_R for every class -- "both zero" is only the special case c = 0.
 ;;;
 ;;; Measured on letter with the plain one-leaf-per-coordinate encoding: under L1 the set
-;;; of leaf-parents with w_L = w_R is *identical* to the set with w_L = w_R = 0 (22127 of
-;;; 54038, exactly equal counts). L1 never produces a pair that is equal but non-zero --
-;;; two independently updated FTRL coordinates do not land on the same float. So a
-;;; criterion that scores ||w_L - w_R|| has nothing extra to find; the structure has to be
-;;; created, not just detected.
+;;; of leaf-parents with w_L = w_R is *identical* to the set with w_L = w_R = 0. From
+;;; RUN-PLAIN-SIBLING-CHECK at the bottom of this file, lambda1 10.0, seed 42:
+;;;
+;;;   (:N-LEAF-PARENT 54177 :BOTH-ZERO 22201 :ALL-EQUAL 22201 :EQUAL-BUT-NOT-ZERO 0)
+;;;
+;;; L1 never produces a pair that is equal but non-zero -- two independently updated FTRL
+;;; coordinates do not land on the same float. So a criterion that scores ||w_L - w_R||
+;;; has nothing extra to find; the structure has to be created, not just detected.
 ;;;
 ;;; This file creates it. For a leaf-parent p with children L and R, replace their two
 ;;; coordinates with
@@ -993,3 +996,63 @@ learner it replaced."
 ;;;; both chose the pruning and was scored on it, so "is a structure selected as
 ;;;; redundant-for-FTRL still good for AROW?" was open. It is: the hybrid lands within 0.06
 ;;;; and 0.04 of the structure AROW picked for itself (97.24 on letter, 98.20 on MNIST).
+
+;;;; The observation this basis is a response to
+;;;;
+;;;; The header claims that under the plain encoding L1 never produces a sibling pair that
+;;;; is equal without being zero, which is why a cheaper criterion change -- scoring
+;;;; ||w_L - w_R|| instead of ||w_L||^2 + ||w_R||^2 -- cannot help, and the basis has to
+;;;; change instead. That claim is load-bearing, so here is the measurement behind it.
+
+(defun plain-sibling-zero-counts (forest learner)
+  "Count, for a learner trained in the PLAIN leaf-index encoding, how many leaf-parents
+have both children all-class-zero and how many merely have them all-class-equal.
+
+The first is the set CHILDREN-L2-NORM scores zero. The second is the set a mergeability
+criterion would score zero, and it always contains the first. Under L1 the two come out
+identical, which is the finding: there is nothing for a difference-based criterion to add."
+  (let* ((parents (collect-leaf-parent forest))
+         (n-class (clol::one-vs-rest-n-class learner))
+         (learners (clol::one-vs-rest-learners-vector learner))
+         (weight-of (clol::one-vs-rest-learner-weight learner))
+         (weights (make-array n-class))
+         (index-offset (forest-index-offset forest))
+         (both-zero 0)
+         (equal-pairs 0))
+    (dotimes (k n-class)
+      (setf (svref weights k) (funcall weight-of (svref learners k))))
+    (dolist (node parents)
+      (let* ((offset (aref index-offset (dtree-id (node-dtree node))))
+             (left (+ (node-leaf-index (node-left-node node)) offset))
+             (right (+ (node-leaf-index (node-right-node node)) offset))
+             (all-zero t)
+             (all-equal t))
+        (dotimes (k n-class)
+          (let ((wl (aref (svref weights k) left))
+                (wr (aref (svref weights k) right)))
+            (unless (and (zerop wl) (zerop wr)) (setf all-zero nil))
+            (unless (= wl wr) (setf all-equal nil))))
+        (when all-zero (incf both-zero))
+        (when all-equal (incf equal-pairs))))
+    (list :n-leaf-parent (length parents)
+          :both-zero both-zero
+          :all-equal equal-pairs
+          :equal-but-not-zero (- equal-pairs both-zero))))
+
+(defun run-plain-sibling-check (&key (lambda1 10.0) (seed 42))
+  "Reproduce the header's claim on letter, in the plain encoding."
+  (multiple-value-bind (datamatrix target) (cl-random-forest-test/fixture:letter-train)
+    (multiple-value-bind (datamatrix-test target-test) (cl-random-forest-test/fixture:letter-test)
+      (let* ((forest (build-seeded-forest :letter datamatrix target seed))
+             (refine-train (make-refine-dataset forest datamatrix))
+             (refine-test (make-refine-dataset forest datamatrix-test))
+             (learner (make-refine-learner-of-type forest 'clol::sparse-lr+ftrl
+                                                   0.1 1.0 lambda1 1.0)))
+        (dotimes (epoch *epochs*)
+          (train-refine-learner learner refine-train target))
+        (format t "~&plain encoding, letter, lambda1 ~,1F, accuracy ~,2F~%  ~S~%"
+                lambda1
+                (test-refine-learner learner refine-test target-test :quiet-p t)
+                (plain-sibling-zero-counts forest learner))
+        (format t "~&SIBLING_CHECK_DONE~%")
+        (force-output)))))
