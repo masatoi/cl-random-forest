@@ -215,3 +215,213 @@ epoch count is too low for a fair comparison."
 ;;;; accuracy 91.36/91.68/91.42/91.90 and AROW refine accuracy 97.14-97.28. The
 ;;;; qualitative picture -- monotonic leaf-parent-zero-rate, accuracy holding through
 ;;;; lambda1=30, lambda1=100 still short of converged -- was stable across all of them.
+
+;;;; Ranking comparison
+;;;;
+;;;; The interesting question is not only "how many weights are zero" but "does FTRL
+;;;; rank leaf-parents differently from AROW at all". AROW is confidence-weighted, so a
+;;;; rarely-visited leaf gets a large weight jump from a single update and may be
+;;;; protected by the current criterion; FTRL's L1 threshold should drop it instead.
+
+(defun average-ranks (scores)
+  "Tie-averaged 1-based ranks of SCORES, as a double-float vector.
+Ties must be averaged, not broken arbitrarily: with lambda1 large most leaf-parents
+score exactly 0.0, and any tie-breaking would invent an ordering the model never had."
+  (let* ((n (length scores))
+         (order (let ((v (make-array n)))
+                  (dotimes (i n) (setf (aref v i) i))
+                  (sort v #'< :key (lambda (i) (aref scores i)))))
+         (ranks (make-array n :element-type 'double-float)))
+    (let ((i 0))
+      (loop while (< i n) do
+        (let ((j i))
+          (loop while (and (< (1+ j) n)
+                           (= (aref scores (aref order (1+ j)))
+                              (aref scores (aref order i))))
+                do (incf j))
+          (let ((r (+ 1.0d0 (/ (+ i j) 2.0d0))))
+            (loop for k from i to j
+                  do (setf (aref ranks (aref order k)) r)))
+          (setf i (1+ j)))))
+    ranks))
+
+(defun spearman (scores-a scores-b)
+  "Spearman rank correlation of two equal-length score vectors, ties averaged."
+  (let* ((ra (average-ranks scores-a))
+         (rb (average-ranks scores-b))
+         (n (length ra))
+         (mean (/ (1+ n) 2.0d0))
+         (num 0d0) (var-a 0d0) (var-b 0d0))
+    (dotimes (i n)
+      (let ((x (- (aref ra i) mean))
+            (y (- (aref rb i) mean)))
+        (incf num (* x y))
+        (incf var-a (* x x))
+        (incf var-b (* y y))))
+    (if (or (zerop var-a) (zerop var-b))
+        0d0
+        (/ num (sqrt (* var-a var-b))))))
+
+(defun bottom-k-overlap (scores-a scores-b k)
+  "Fraction of the K lowest-scoring indices that SCORES-A and SCORES-B agree on.
+
+Read this with care once FTRL's zero set is larger than K: every zero-scoring
+leaf-parent is equally low, so the bottom K under FTRL is an arbitrary subset of that
+set and the overlap understates how much the two criteria really agree. Compare K
+against LEAF-PARENT-ZERO-RATE * N before drawing a conclusion."
+  (flet ((bottom (scores)
+           (let ((order (make-array (length scores))))
+             (dotimes (i (length scores)) (setf (aref order i) i))
+             (subseq (sort order #'< :key (lambda (i) (aref scores i))) 0 k))))
+    (let ((in-a (make-hash-table)))
+      (map nil (lambda (i) (setf (gethash i in-a) t)) (bottom scores-a))
+      (/ (float (count-if (lambda (i) (gethash i in-a)) (bottom scores-b)))
+         k))))
+
+(defun compare-rankings (forest arow-learner ftrl-learner)
+  "Rank agreement between the two learners' pruning criteria over FOREST."
+  (let* ((a (leaf-parent-scores forest arow-learner))
+         (b (leaf-parent-scores forest ftrl-learner))
+         (n (length a)))
+    (list :n-leaf-parent n
+          :spearman (spearman a b)
+          :bottom-10%-overlap (bottom-k-overlap a b (floor (* n 0.1)))
+          :bottom-50%-overlap (bottom-k-overlap a b (floor (* n 0.5)))
+          :ftrl-zero-count (count 0.0 b))))
+
+;;;; Pruning end to end
+;;;;
+;;;; Pruning renumbers the leaf index space (SET-LEAF-INDEX-FOREST!), so both the refine
+;;;; dataset and the learner have to be rebuilt before re-training. This is the README
+;;;; procedure and T/PRUNING.LISP's PRUNING-PRESERVES-REFINE-ACCURACY does the same.
+
+(defun leaf-count (forest)
+  "Total leaves across FOREST. Not FOREST-N-LEAF: that slot goes stale on pruning
+\(issue #15)."
+  (reduce #'+ (mapcar #'dtree-max-leaf-index (forest-dtree-list forest))))
+
+(defun prune-and-relearn (forest datamatrix datamatrix-test train-target test-target
+                          learner rate &optional learner-args)
+  "Prune FOREST at RATE using LEARNER's weights, then rebuild and re-train.
+
+LEARNER-ARGS is NIL to rebuild with MAKE-REFINE-LEARNER, or (learner-type . params) to
+rebuild with MAKE-REFINE-LEARNER-OF-TYPE -- the rebuilt learner must be the same kind
+as the one that chose the pruning, or the before/after accuracies are not comparable.
+FOREST is mutated."
+  (let ((accuracy-before (test-refine-learner
+                          learner (make-refine-dataset forest datamatrix-test)
+                          test-target :quiet-p t))
+        (leaves-before (leaf-count forest)))
+    (pruning! forest learner rate)
+    (let* ((refine-train (make-refine-dataset forest datamatrix))
+           (refine-test (make-refine-dataset forest datamatrix-test))
+           (relearner (if learner-args
+                          (apply #'make-refine-learner-of-type forest
+                                 (car learner-args) (cdr learner-args))
+                          (make-refine-learner forest)))
+           (curve (train-epochs relearner refine-train train-target
+                                refine-test test-target)))
+      (list :rate rate
+            :accuracy-before accuracy-before
+            :accuracy-after (car (last curve))
+            :accuracy-curve curve
+            :leaf-count-before leaves-before
+            :leaf-count-after (leaf-count forest)))))
+
+(defun run-letter-pruning (lambda1)
+  "Compare AROW and FTRL as pruning criteria on letter at LAMBDA1.
+
+Prints the ranking agreement once, then one PRUNE-AND-RELEARN row per (learner, rate).
+Every row rebuilds the forest from scratch because PRUNE-AND-RELEARN mutates it: reusing
+one forest across rates would prune the 0.5 row on top of the already-pruned 0.1 row."
+  (let ((ftrl-args (list 'clol::sparse-lr+ftrl 0.1 1.0 lambda1 1.0))
+        (datamatrix (nth-value 0 (cl-random-forest-test/fixture:letter-train)))
+        (datamatrix-test (nth-value 0 (cl-random-forest-test/fixture:letter-test))))
+    (multiple-value-bind (forest refine-train refine-test train-target test-target)
+        (letter-forest)
+      (let ((arow (make-refine-learner forest))
+            (ftrl (apply #'make-refine-learner-of-type forest ftrl-args)))
+        (train-epochs arow refine-train train-target refine-test test-target)
+        (train-epochs ftrl refine-train train-target refine-test test-target)
+        (format t "~&ranking agreement at lambda1 ~,1F:~%  ~S~%"
+                lambda1 (compare-rankings forest arow ftrl))))
+    (dolist (rate '(0.1 0.5))
+      (dolist (args (list nil ftrl-args))
+        (multiple-value-bind (forest refine-train refine-test train-target test-target)
+            (letter-forest)
+          (let ((learner (if args
+                             (apply #'make-refine-learner-of-type forest args)
+                             (make-refine-learner forest))))
+            (train-epochs learner refine-train train-target refine-test test-target)
+            (format t "~&~A rate ~,2F:~%  ~S~%"
+                    (if args :ftrl :arow) rate
+                    (prune-and-relearn forest datamatrix datamatrix-test
+                                       train-target test-target learner rate args))))))))
+
+;;;; Measured on letter, 500 trees, max-depth 15, 20 epochs, 4-worker lparallel kernel,
+;;;; lambda1 10.0 (Task 2's "largest lambda1 whose accuracy cost is close to run-to-run
+;;;; noise"):
+;;;;
+;;;;   (ql:quickload :cl-random-forest-test/fixture)
+;;;;   (setf lparallel:*kernel* (lparallel:make-kernel 4))
+;;;;   (load "src/experimental/ftrl-pruning-sparsity.lisp")
+;;;;   (run-letter-pruning 10.0)
+;;;;
+;;;; ranking agreement at lambda1 10.0:
+;;;;   (:N-LEAF-PARENT 54145 :SPEARMAN 0.7392955287108665d0 :BOTTOM-10%-OVERLAP 0.23420762
+;;;;    :BOTTOM-50%-OVERLAP 0.78446364 :FTRL-ZERO-COUNT 22046)
+;;;;
+;;;; FTRL-ZERO-COUNT / N-LEAF-PARENT = 40.7%, matching Task 2's sweep (40.9%) up to
+;;;; run-to-run forest variance. That zero count is bigger than both K windows below
+;;;; (5414 at 10%, 27072 at 50%), so read BOTTOM-K-OVERLAP with its own caveat in mind:
+;;;; the bottom 10% (5414 leaf-parents) is entirely inside FTRL's 22046-wide zero-tied
+;;;; block, so FTRL's "bottom 10%" there is an arbitrary subset of ties and the 23.4%
+;;;; overlap number is not really measuring rank agreement, just how much of AROW's true
+;;;; bottom-10% happens to fall inside FTRL's much larger zero set. The bottom 50%
+;;;; (27072) is mostly but not entirely inside the zero set (22046 of 27072, 81.4%), so
+;;;; that figure is less arbitrary but still ties-dominated. Only SPEARMAN (0.74) and
+;;;; FTRL-ZERO-COUNT are safe to quote without this caveat, and SPEARMAN itself compares
+;;;; AROW's tie-free ranking (AROW's leaf-parent-zero-rate measured at 0.0% throughout
+;;;; this project) against FTRL's heavily-tied one -- 0.74 says the two criteria broadly
+;;;; agree on which leaf-parents are least useful, not that they agree leaf-parent by
+;;;; leaf-parent.
+;;;;
+;;;; Four PRUNE-AND-RELEARN rows, each on its own freshly built forest:
+;;;;
+;;;; | learner | rate | accuracy before | accuracy after | leaves before | leaves after |
+;;;; |---|---|---|---|---|---|
+;;;; | AROW | 0.1 | 97.26 | 97.26 | 159621 | 154236 (-3.4%) |
+;;;; | FTRL | 0.1 | 97.00 | 97.08 | 159031 | 153662 (-3.4%) |
+;;;; | AROW | 0.5 | 97.16 | 97.18 | 159987 | 133003 (-16.9%) |
+;;;; | FTRL | 0.5 | 96.58 | 96.68 | 157923 | 131137 (-17.0%) |
+;;;;
+;;;; Reading these: accuracy does not drop for either learner at either rate -- it is
+;;;; flat (AROW 0.1) or ticks up by 0.02-0.10pt after retraining, including at rate 0.5,
+;;;; which deletes about a sixth of all leaves. This matches the CVPR2015 global-pruning
+;;;; result that a trained forest is redundant enough for both criteria to prune
+;;;; substantially and recover full accuracy on retrain; it does not show FTRL winning
+;;;; over AROW on accuracy at a matched rate here (FTRL's absolute accuracy is ~0.5-1pt
+;;;; below AROW's before and after pruning at both rates, consistent with the accuracy
+;;;; cost lambda1=10 already had in Task 2's sweep -- pruning does not add to that gap or
+;;;; close it).
+;;;;
+;;;; The leaves-before/leaves-after counts are near-identical between AROW and FTRL at a
+;;;; given rate (154236 vs 153662; 133003 vs 131137) -- that is expected and not a
+;;;; finding: PRUNING! deletes FLOOR(N-LEAF-PARENT * RATE) leaf-parents regardless of
+;;;; which learner chose them, so the *count* removed is set by RATE and the forest's own
+;;;; leaf-parent count (which itself varies build to build), not by which learner ranked
+;;;; them. What differs between AROW and FTRL is *which* leaf-parents get removed, which
+;;;; SPEARMAN and the overlap numbers above speak to, not the leaf-count columns here.
+;;;;
+;;;; Net read for the report: FTRL's ranking is correlated with AROW's (spearman 0.74)
+;;;; but far from identical, and its L1 zero set is large enough that a big chunk of any
+;;;; small-to-medium pruning rate is chosen from ties rather than a strict order. Despite
+;;;; that, pruning guided by either criterion is harmless to accuracy on letter at rate
+;;;; 0.1 and 0.5 after the standard rebuild-and-retrain step -- this experiment does not
+;;;; find a case where FTRL's sparsity makes pruning behave differently in outcome from
+;;;; AROW's L2-norm criterion, only that it makes the criterion cheaper to read off
+;;;; (FTRL's zeros are already an explicit "prune me" signal; AROW's are not).
+;;;;
+;;;; Run time: well under a minute end to end (five 500-tree forests plus six 20-epoch
+;;;; refine trainings), matching Task 2's observation that letter's bagging-ratio 0.1
+;;;; keeps each tree's training set small.
