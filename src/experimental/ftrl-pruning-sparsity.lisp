@@ -425,3 +425,140 @@ one forest across rates would prune the 0.5 row on top of the already-pruned 0.1
 ;;;; Run time: well under a minute end to end (five 500-tree forests plus six 20-epoch
 ;;;; refine trainings), matching Task 2's observation that letter's bagging-ratio 0.1
 ;;;; keeps each tree's training set small.
+
+;;;; MNIST fixture
+;;;;
+;;;; Confirms the letter finding on a second dataset with a different class count (10 vs
+;;;; letter's 26) -- the design doc flagged group sparsity (a leaf is only prunable when
+;;;; its weight is zero in *every* class) as the thing the whole proposal hinges on, so
+;;;; class count is the natural axis to vary.
+
+(defun shift-labels-up! (target)
+  "Add 1 to every label in TARGET, in place.
+CL-RANDOM-FOREST/SRC/UTILS:READ-DATA subtracts 1 from every LIBSVM label, which is right
+for 1-based label files. MNIST's labels already start at 0, so they come back as -1..8
+and have to be shifted back. example/classification/mnist.lisp does the same thing."
+  (dotimes (i (length target) target)
+    (incf (aref target i))))
+
+(defun mnist-forest ()
+  "Return (values forest refine-train refine-test train-target test-target) for MNIST.
+Forest settings are MNIST-FOREST's from example/classification/mnist.lisp -- the forest
+that file's PRUNING! calls operate on (refine 98.259%, 98008 leaf-parents) -- plus
+:remove-sample-indices? nil. READ-DATA is inherited from CL-RANDOM-FOREST/SRC/UTILS,
+which this package :USEs."
+  (let ((dir cl-random-forest-test/fixture:*dataset-dir*))
+    (multiple-value-bind (datamatrix target)
+        (read-data (merge-pathnames "mnist.scale" dir) 784)
+      (multiple-value-bind (datamatrix-test target-test)
+          (read-data (merge-pathnames "mnist.scale.t" dir) 784)
+        (shift-labels-up! target)
+        (shift-labels-up! target-test)
+        (let ((forest (make-forest 10 datamatrix target
+                                   :n-tree 500 :bagging-ratio 0.1
+                                   :min-region-samples 5 :n-trial 10 :max-depth 10
+                                   :remove-sample-indices? nil)))
+          (values forest
+                  (make-refine-dataset forest datamatrix)
+                  (make-refine-dataset forest datamatrix-test)
+                  target
+                  target-test))))))
+
+;;;; Measured on MNIST, 500 trees, max-depth 10, 20 epochs, 4-worker lparallel kernel.
+;;;; Sanity check (its own forest build, separate from the sweep build below --
+;;;; MAKE-FOREST has no fixed RNG seed, same build-to-build variance as letter):
+;;;;
+;;;;   (ql:quickload :cl-random-forest-test/fixture)
+;;;;   (setf lparallel:*kernel* (lparallel:make-kernel 4))
+;;;;   (load "src/experimental/ftrl-pruning-sparsity.lisp")
+;;;;   (in-package :cl-random-forest/src/random-forest)
+;;;;   (multiple-value-bind (forest rd rt tg tgt) (mnist-forest) ...)
+;;;;
+;;;; forest accuracy: 93.46% (example/classification/mnist.lisp's reference: 93.38%)
+;;;; n-leaf-parent: 98760 (reference before PRUNING! there: 98008)
+;;;;
+;;;; Both numbers are close enough to the example's reference values to trust the labels
+;;;; and dimension are right (a doubled or missing SHIFT-LABELS-UP! would have driven
+;;;; accuracy far below 93%, not within a tenth of a point of it), and are consistent with
+;;;; the few-tenths/few-hundred build-to-build variance already documented for letter.
+;;;;
+;;;; The sweep itself, sweeping only lambda1 3.0/10.0/30.0 -- the three points that
+;;;; bracketed the project's 0.1-0.5 operational PRUNING-RATE range on letter, per this
+;;;; task's brief -- launched with the plan's nohup line corrected: QUICKLOAD before
+;;;; setting LPARALLEL:*KERNEL*, not after (the plan's original order fails because the
+;;;; LPARALLEL package does not exist yet in a fresh image, so the SETF drops into the
+;;;; debugger and the run hangs). The 4-worker kernel parallelizes MAKE-FOREST over trees
+;;;; and MAKE-REFINE-DATASET/TRAIN-REFINE-LEARNER over independent one-vs-rest classes --
+;;;; exact parallelism, not an approximation, so it changes wall-clock time only, not the
+;;;; numbers below:
+;;;;
+;;;;   (ql:quickload :cl-random-forest-test/fixture)
+;;;;   (setf lparallel:*kernel* (lparallel:make-kernel 4))
+;;;;   (load "src/experimental/ftrl-pruning-sparsity.lisp")
+;;;;   (in-package :cl-random-forest/src/random-forest)
+;;;;   (multiple-value-bind (forest rd rt tg tgt) (mnist-forest)
+;;;;     (print-sweep (sweep-lambda1 forest rd rt tg tgt (list 3.0 10.0 30.0))))
+;;;;
+;;;; | learner | lambda1 | accuracy | element-zero | leaf-zero | leaf-parent-zero |
+;;;; |---|---|---|---|---|---|
+;;;; | AROW |      | 98.27 |  7.2% |  0.8% |  0.0% |
+;;;; | FTRL | 3.0  | 98.08 | 87.3% | 52.1% | 25.5% |
+;;;; | FTRL | 10.0 | 97.93 | 94.5% | 73.5% | 52.2% |
+;;;; | FTRL | 30.0 | 97.76 | 97.4% | 85.3% | 71.0% |
+;;;; n-leaf 249251, n-leaf-parent 98283, epochs 20
+;;;;
+;;;; 10 classes (MNIST) versus 26 (letter), matched lambda1 -- letter numbers copied from
+;;;; the block above:
+;;;;
+;;;; | lambda1 | dataset (classes) | accuracy | delta vs AROW | leaf-zero | leaf-parent-zero |
+;;;; |---|---|---|---|---|---|
+;;;; | 3  | letter (26) | 96.80 | -0.34 | 41.6% | 18.3% |
+;;;; | 3  | MNIST (10)  | 98.08 | -0.19 | 52.1% | 25.5% |
+;;;; | 10 | letter (26) | 96.80 | -0.34 | 63.7% | 40.9% |
+;;;; | 10 | MNIST (10)  | 97.93 | -0.34 | 73.5% | 52.2% |
+;;;; | 30 | letter (26) | 96.28 | -0.86 | 79.9% | 63.4% |
+;;;; | 30 | MNIST (10)  | 97.76 | -0.51 | 85.3% | 71.0% |
+;;;;
+;;;; At every matched lambda1, MNIST's leaf-zero-rate and leaf-parent-zero-rate are both
+;;;; higher than letter's, and MNIST's accuracy cost is smaller or equal, never larger.
+;;;; Fewer classes made whole-leaf zeros easier to reach, not harder, and cheaper -- the
+;;;; opposite of the direction that would have undermined the design doc's group-sparsity
+;;;; premise. This holds despite MNIST's element-zero-rate being comparable to, or even
+;;;; slightly below, letter's at the same lambda1 (94.5%/97.4% vs letter's 96.9%/99.0% at
+;;;; lambda1=10/30) -- the extra leaf- and leaf-parent-level sparsity on MNIST is not
+;;;; coming from more sparsity per weight, it is coming from needing fewer classes' weights
+;;;; to die together for a whole leaf (or leaf-parent) to zero out.
+;;;;
+;;;; Independence check (leaf-zero-rate vs element-zero-rate^n-classes), same test as the
+;;;; report's "Group sparsity" section computed for letter's 26 classes:
+;;;;
+;;;; | lambda1 | element-zero | leaf-zero (measured) | independence (elt-zero^10) | measured/pred |
+;;;; |---|---|---|---|---|
+;;;; | 3  | 87.3% | 52.1% | 25.7% | ~2.03x |
+;;;; | 10 | 94.5% | 73.5% | 56.8% | ~1.29x |
+;;;; | 30 | 97.4% | 85.3% | 76.9% | ~1.11x |
+;;;;
+;;;; Measured leaf-zero-rate exceeds the independence prediction at every lambda1 here too
+;;;; -- cross-class correlation is real at 10 classes, the same qualitative finding as
+;;;; letter's 26-class table (ratios there: ~9.4x/1.4x/1.04x at the same three lambda1).
+;;;; The *ratio* is smaller on MNIST purely because the independence baseline itself is
+;;;; larger with fewer classes -- raising a fraction below 1 to the 10th power shrinks it
+;;;; less than raising it to the 26th -- not because the correlation is weaker: MNIST's
+;;;; absolute leaf-zero-rate is higher than letter's at every matched lambda1 despite the
+;;;; smaller ratio.
+;;;;
+;;;; Epoch count: 20 (*EPOCHS*, unchanged from letter). Unlike the letter block above, this
+;;;; run's driver called PRINT-SWEEP directly on SWEEP-LAMBDA1's return value without
+;;;; printing each row's :ACCURACY-CURVE first, so there is no direct per-epoch evidence
+;;;; here that lambda1=30 had flattened out by epoch 20 on MNIST the way it was confirmed
+;;;; to for letter. MNIST's accuracy costs at every lambda1 (0.19/0.34/0.51pt) are smaller
+;;;; than letter's already-converged-at-20-epochs costs at the same lambda1 (0.34/0.34/
+;;;; 0.86pt), and MNIST's training set is 4x larger (60000 vs 15000 rows, so 4x more
+;;;; gradient updates per epoch), both of which suggest convergence should be at least as
+;;;; fast as letter's here, not slower -- but this was not directly measured and is a
+;;;; limitation of this run, not a verified fact.
+;;;;
+;;;; Run time: both the sanity build and the four-row sweep were launched as their own
+;;;; background `ros` processes and both completed, but wall-clock time was not recorded
+;;;; precisely; qualitatively substantially longer than letter's "well under a minute", as
+;;;; expected going in given MNIST's 4x row count and 49x dimension count.

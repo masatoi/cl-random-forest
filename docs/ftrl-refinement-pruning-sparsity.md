@@ -8,10 +8,10 @@ the refine learner's weights actually helps Global Pruning (`pruning!` in
 `src/random-forest.lisp`), and records the judgment the design doc's criteria produce.
 
 All numbers below are copied verbatim from the trailing comment blocks in
-`src/experimental/ftrl-pruning-sparsity.lisp` (one block per measurement run, Task 2 and
-Task 3 of the implementing plan). Nothing here was re-measured or extrapolated beyond the
-group-sparsity comparison in the section below with that name, which is a direct
-computation from those same numbers.
+`src/experimental/ftrl-pruning-sparsity.lisp` (one block per measurement run, Tasks 2, 3
+and 5 of the implementing plan). Nothing here was re-measured or extrapolated beyond the
+group-sparsity comparison and the MNIST independence check, both direct computations from
+those same numbers.
 
 ## Conclusion
 
@@ -23,7 +23,9 @@ leaf-parents regardless of which criterion ranked them -- and pruning AROW and F
 matched rates (0.1, 0.5) produced no accuracy difference after the standard
 rebuild-and-retrain step. FTRL's payoff is a data-driven stopping signal, not a better
 pruning outcome, and getting it costs 0.3-0.9 accuracy points across the lambda1 range
-where it is useful.
+where it is useful. A second dataset with fewer classes (MNIST, 10 vs `letter`'s 26)
+reproduces this pattern at an equal or lower accuracy cost -- see "MNIST cross-check"
+below.
 
 ## Premises
 
@@ -195,6 +197,104 @@ rather than from 26 independent coin flips landing zero together.
 strong cross-class correlation above, whether a leaf's *sibling* is also all-zero looks
 close to independent of whether the leaf itself is.)
 
+## MNIST cross-check
+
+The measurements above are all `letter`-specific (26 classes). Since the design doc's
+own criterion for viability rests entirely on group sparsity -- a leaf is only prunable
+once its weight is zero in *every* class -- class count is the natural axis to vary to
+test whether the finding generalizes. This section repeats the sweep on MNIST (10
+classes, 784 dimensions, 60000 train / 10000 test rows), at the same three lambda1
+values (3.0, 10.0, 30.0) that bracketed the operational pruning-rate range on `letter`.
+
+Forest config matches `example/classification/mnist.lisp`'s `mnist-forest` (`:n-tree 500
+:bagging-ratio 0.1 :max-depth 10 :n-trial 10 :min-region-samples 5`), plus
+`:remove-sample-indices? nil` for the same reason as `letter`. MNIST's labels needed one
+extra step beyond `letter`'s: `read-data` subtracts 1 from every LIBSVM label, correct
+for 1-based label files, but MNIST's labels already start at 0 -- a `shift-labels-up!`
+helper adds 1 back after reading, matching what `example/classification/mnist.lisp` does
+inline.
+
+Before sweeping, the forest was sanity-checked against that example's recorded baseline:
+measured forest accuracy 93.46% versus the example's 93.38%, and 98760 leaf-parents
+versus its 98008 before pruning -- both close enough to rule out a labeling or dimension
+bug (a doubled or missing label shift would have driven accuracy far below 93%, not
+within a tenth of a point of it) and consistent with the build-to-build variance
+`make-forest`'s unseeded bagging already produces on `letter` (91.36-91.90% across four
+runs).
+
+| learner | lambda1 | accuracy | element-zero | leaf-zero | leaf-parent-zero |
+|---|---|---|---|---|---|
+| AROW |  | 98.27 | 7.2% | 0.8% | 0.0% |
+| FTRL | 3.0 | 98.08 | 87.3% | 52.1% | 25.5% |
+| FTRL | 10.0 | 97.93 | 94.5% | 73.5% | 52.2% |
+| FTRL | 30.0 | 97.76 | 97.4% | 85.3% | 71.0% |
+
+n-leaf 249251, n-leaf-parent 98283, 20 epochs (this is the sweep's own forest build,
+separate from the sanity-check build above).
+
+**10 classes versus 26, matched lambda1** (`letter` numbers repeated from the table
+above):
+
+| lambda1 | dataset (classes) | accuracy | delta vs AROW | leaf-zero | leaf-parent-zero |
+|---|---|---|---|---|---|
+| 3 | letter (26) | 96.80 | -0.34 | 41.6% | 18.3% |
+| 3 | MNIST (10) | 98.08 | -0.19 | 52.1% | 25.5% |
+| 10 | letter (26) | 96.80 | -0.34 | 63.7% | 40.9% |
+| 10 | MNIST (10) | 97.93 | -0.34 | 73.5% | 52.2% |
+| 30 | letter (26) | 96.28 | -0.86 | 79.9% | 63.4% |
+| 30 | MNIST (10) | 97.76 | -0.51 | 85.3% | 71.0% |
+
+At every matched lambda1, MNIST's leaf-zero-rate and leaf-parent-zero-rate are both
+higher than `letter`'s, and MNIST's accuracy cost is smaller or equal, never larger.
+**Fewer classes made whole-leaf zeros easier to reach, not harder, and did so at a lower
+accuracy cost** -- the opposite of the direction that would have undermined the design
+doc's group-sparsity premise. This holds despite MNIST's element-zero-rate being
+comparable to, or even slightly *below*, `letter`'s at the same lambda1 (94.5%/97.4% vs
+96.9%/99.0% at lambda1=10/30): the extra leaf- and leaf-parent-level sparsity on MNIST is
+not coming from more sparsity per weight, it is coming from needing fewer classes'
+weights to die together before a whole leaf (or leaf-parent) zeros out.
+
+The same independence check as the Group Sparsity section above, run on MNIST's 10
+classes:
+
+| lambda1 | element-zero-rate | leaf-zero-rate (measured) | independence prediction (element-zero-rate^10) | measured / predicted |
+|---|---|---|---|---|
+| 3 | 87.3% | 52.1% | 25.7% | ~2.03x |
+| 10 | 94.5% | 73.5% | 56.8% | ~1.29x |
+| 30 | 97.4% | 85.3% | 76.9% | ~1.11x |
+
+Measured leaf-zero-rate exceeds the independence prediction at every lambda1 here too --
+cross-class correlation is real at 10 classes, the same qualitative finding as `letter`'s
+26-class table (ratios there: ~9.4x/1.4x/1.04x at the same three lambda1). The *ratio* to
+the independence baseline is smaller on MNIST purely because the baseline itself is
+larger with fewer classes -- raising a fraction below 1 to the 10th power shrinks it less
+than raising it to the 26th -- not because the correlation is weaker: MNIST's absolute
+leaf-zero-rate is higher than `letter`'s at every matched lambda1 despite the smaller
+ratio.
+
+Against the existing pruning figures already in `example/classification/mnist.lisp`
+(98008 leaf-parents before `pruning!` at rate 0.1, 93228 after, refine accuracy 98.259%,
+all under the AROW learner): AROW's leaf-parent-zero-rate here measured 0.0%, same as
+`letter`, so AROW offers no data-driven stopping signal on MNIST either -- `pruning-rate`
+still has to be chosen by hand, independent of class count. FTRL's leaf-parent-zero-rate
+clears that file's low-end operating rate (0.1) already at lambda1=3 (25.5%, versus
+`letter` needing lambda1=3 to reach only 18.3%) and clears the whole 0.1-0.5 range by
+lambda1=10 (52.2%) -- MNIST reaches the design doc's viability bar at least as easily as
+`letter` did, at a smaller accuracy cost (0.19-0.51pt across lambda1=3-30, versus
+`letter`'s 0.34-0.86pt).
+
+**This confirms, and if anything strengthens, the `letter` finding: reducing class count
+from 26 to 10 did not make group sparsity harder to obtain -- it made it easier, on both
+axes (rate and accuracy cost) that matter for pruning.** One piece of evidence does not
+carry over from the `letter` measurement: per-epoch convergence. This run's driver script
+printed only `print-sweep`'s final-epoch summary, not each row's per-epoch accuracy
+curve, so unlike `letter` there is no direct evidence here that lambda1=30 had flattened
+out by epoch 20 on MNIST. MNIST's smaller accuracy costs at every lambda1 (never larger
+than `letter`'s already-converged-at-20-epochs costs at the same lambda1) and its 4x
+larger training set (60000 vs 15000 rows, so 4x more gradient updates per epoch) both
+suggest convergence should be at least as fast as `letter`'s here, not slower -- but this
+was not directly measured and is recorded as a limitation below, not a verified fact.
+
 ## Judgment
 
 Applying the design doc's criterion directly: *"leaf-parent-zero-rate reaches the
@@ -234,11 +334,20 @@ value used throughout the ranking and pruning experiments, the accuracy cost is 
 
 ## Limitations
 
-- **Single dataset.** Only `letter` was measured; the design doc's own measurement
-  procedure made an MNIST cross-check conditional on `letter` looking promising ("if
-  promising, cross-check against the existing MNIST baseline"), and that step was not
-  carried out. The conclusions above are `letter`-specific (26 classes, 16 dimensions);
-  they are not verified to hold at MNIST's class/dimension count or feature density.
+- **Two datasets, not a general class-count sweep.** The design doc's own measurement
+  procedure made an MNIST cross-check conditional on `letter` looking promising; that
+  check was carried out (see "MNIST cross-check" above) and reproduced -- and
+  strengthened -- the qualitative `letter` finding at 10 classes, 784 dimensions. But two
+  data points (10 and 26 classes) do not establish a trend, and both datasets share the
+  project's other example defaults (`bagging-ratio 0.1`, comparable tree counts); the
+  finding is not verified to hold at other class counts, dimensionalities, or feature
+  densities beyond these two.
+- **MNIST epoch-convergence not directly verified.** The MNIST sweep's driver printed
+  only the final-epoch summary, not each row's per-epoch accuracy curve (unlike `letter`,
+  where the curves confirmed lambda1<=10 had converged by epoch 20 and lambda1=30/100
+  were still creeping up). MNIST's smaller accuracy costs at every lambda1 and its 4x
+  larger training set both suggest its convergence is at least as fast as `letter`'s, but
+  this is an inference, not a measurement.
 - **Unseeded, stochastic forest construction.** `make-forest`'s bagging has no fixed RNG
   seed. Every row above comes from its own forest build; across the runs performed,
   forest accuracy ranged 91.36-91.90% and AROW refine accuracy 97.14-97.28%. The
