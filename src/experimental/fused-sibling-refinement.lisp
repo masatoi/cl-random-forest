@@ -61,7 +61,8 @@
                 #:make-l2-norm
                 #:children-l2-norm)
   (:import-from #:cl-random-forest/src/utils
-                #:dotimes/pdotimes))
+                #:dotimes/pdotimes
+                #:read-data))
 
 (in-package :cl-random-forest/src/experimental/fused-sibling-refinement)
 
@@ -432,6 +433,91 @@ accuracy ~,2F -> ~,2F leaves ~D -> ~D~%"
     (format t "~&FUSED_DONE~%")
     (force-output)))
 
+(defun mnist-forest ()
+  "Return (values forest datamatrix datamatrix-test train-target test-target).
+
+Forest settings are MNIST-FOREST's from example/classification/mnist.lisp -- the forest
+that file's PRUNING! calls operate on -- plus :remove-sample-indices? nil.
+
+READ-DATA subtracts 1 from every LIBSVM label, which is right for 1-based label files.
+MNIST's labels already start at 0, so they arrive as -1..8 and have to be shifted back,
+exactly as example/classification/mnist.lisp does inline."
+  (let ((dir cl-random-forest-test/fixture:*dataset-dir*))
+    (multiple-value-bind (datamatrix target)
+        (read-data (merge-pathnames "mnist.scale" dir) 784)
+      (multiple-value-bind (datamatrix-test target-test)
+          (read-data (merge-pathnames "mnist.scale.t" dir) 784)
+        (dotimes (i (length target))
+          (incf (aref target i)))
+        (dotimes (i (length target-test))
+          (incf (aref target-test i)))
+        (values (make-forest 10 datamatrix target
+                             :n-tree 500 :bagging-ratio 0.1
+                             :min-region-samples 5 :n-trial 10 :max-depth 10
+                             :remove-sample-indices? nil)
+                datamatrix datamatrix-test target target-test)))))
+
+(defun run-fused-mnist (&optional (lambda1-list '(3.0 10.0 30.0)) (prune-lambda1 10.0))
+  "Reproduce the letter result on MNIST: 10 classes instead of 26.
+
+Builds the forest once and prunes the very forest the kept learner was trained on, so the
+before/after accuracy pair is paired rather than two independent unseeded builds -- which
+is the main methodological weakness of RUN-FUSED-LETTER."
+  (multiple-value-bind (forest datamatrix datamatrix-test train-target test-target)
+      (mnist-forest)
+    (format t "~&forest accuracy ~,2F (example/classification/mnist.lisp records 93.38)~%"
+            (test-forest forest datamatrix-test test-target :quiet-p t))
+    (force-output)
+    (let ((map (make-reparam-map forest)))
+      (format t "~&encoding check: worst |plain - reparam| = ~,8F over 300 data~%"
+              (verify-encoding forest map datamatrix))
+      (format t "~&dimension ~D, leaf-parents ~D, leaves ~D~%"
+              (reparam-map-dimension map)
+              (length (reparam-map-parents map))
+              (leaf-count forest))
+      (force-output)
+      (let ((train (make-reparam-dataset forest map datamatrix))
+            (test (make-reparam-dataset forest map datamatrix-test))
+            (prune-learner nil)
+            (prune-before 0.0))
+        (dolist (lambda1 lambda1-list)
+          (let* ((learner (make-refine-learner-of-type
+                           forest 'clol::sparse-lr+ftrl 0.1 1.0 lambda1 1.0))
+                 (curve (train-fused-epochs learner train train-target
+                                            test test-target *epochs*)))
+            (format t "~&FUSED lambda1 ~,1F accuracy ~,2F ~S~%"
+                    lambda1 (car (last curve)) (fused-report map learner))
+            (format t "~&  curve ~{~,2F ~}~%" curve)
+            (force-output)
+            (when (= lambda1 prune-lambda1)
+              (setf prune-learner learner
+                    prune-before (car (last curve))))))
+        (when prune-learner
+          (let ((n-parent (length (reparam-map-parents map)))
+                (leaves-before (leaf-count forest)))
+            (let ((deleted (prune-mergeable! forest map prune-learner)))
+              ;; Release the pre-pruning datasets before building their replacements; on
+              ;; MNIST each one is hundreds of megabytes of sparse vectors.
+              (setf train nil test nil)
+              (let* ((map2 (make-reparam-map forest))
+                     (train2 (make-reparam-dataset forest map2 datamatrix))
+                     (test2 (make-reparam-dataset forest map2 datamatrix-test))
+                     (learner2 (make-refine-learner-of-type
+                                forest 'clol::sparse-lr+ftrl 0.1 1.0 prune-lambda1 1.0))
+                     (after (car (last (train-fused-epochs learner2 train2 train-target
+                                                           test2 test-target *epochs*)))))
+                (format t "~&PRUNE lambda1 ~,1F deleted ~D/~D (~,1F%) ~
+accuracy ~,2F -> ~,2F leaves ~D -> ~D~%"
+                        prune-lambda1 deleted n-parent
+                        (* 100.0 (/ (float deleted) n-parent))
+                        prune-before after leaves-before (leaf-count forest))
+                (format t "~&forest accuracy after pruning ~,2F~%"
+                        (test-forest forest datamatrix-test test-target :quiet-p t))
+                (force-output)))))))
+    (format t "~&FUSED_MNIST_DONE~%")
+    (force-output)))
+
+
 ;;;; Measured on letter, 500 trees, max-depth 15, 20 epochs, 4-worker lparallel kernel.
 ;;;; dimension 157431 = leaf count 157431 (the basis change is dimension-preserving, as
 ;;;; it must be), 53631 leaf-parents. Encoding check: worst |plain - reparam| = 0.00000000
@@ -482,3 +568,47 @@ accuracy ~,2F -> ~,2F leaves ~D -> ~D~%"
 ;;;; so its accuracy is a slight underestimate, the same effect the plain encoding showed.
 ;;;; A stronger L1 delays learning because |z| must cross lambda1 before a weight moves at
 ;;;; all.
+
+;;;; Measured on MNIST, 500 trees, max-depth 10, 20 epochs, 8-worker lparallel kernel.
+;;;; Forest accuracy 93.27 against the 93.38 example/classification/mnist.lisp records, so
+;;;; the labels and dimension are right. dimension 251521 = leaf count 251521, 99047
+;;;; leaf-parents. Encoding check: worst |plain - reparam| = 0.00000000 over 300 data.
+;;;;
+;;;; | lambda1 | accuracy | mergeable | of which informative | both-zero | element-zero |
+;;;; |---|---|---|---|---|---|
+;;;; | 3.0  | 97.98 | 42.6% | 13.2% | 29.4% | 87.1% |
+;;;; | 10.0 | 97.97 | 68.1% | 11.7% | 56.3% | 94.4% |
+;;;; | 30.0 | 97.79 | 82.0% | 8.7%  | 73.3% | 97.2% |
+;;;;
+;;;; Against the plain encoding's MNIST numbers in
+;;;; src/experimental/ftrl-pruning-sparsity.lisp (AROW baseline there: 98.27 / 0.0%):
+;;;;
+;;;; | lambda1 | plain acc / prunable | fused acc / prunable | prunable gained |
+;;;; |---|---|---|---|
+;;;; | 3.0  | 98.08 / 25.5% | 97.98 / 42.6% | +17.1pt |
+;;;; | 10.0 | 97.93 / 52.2% | 97.97 / 68.1% | +15.9pt |
+;;;; | 30.0 | 97.76 / 71.0% | 97.79 / 82.0% | +11.0pt |
+;;;;
+;;;; The letter result reproduces and strengthens: the accuracy differences (-0.10, +0.04,
+;;;; +0.03) are inside run-to-run noise and go both ways, while the prunable fraction gains
+;;;; 11 to 17 points rather than letter's ~9. The BOTH-ZERO column tracks the plain
+;;;; encoding's prunable rate as it did on letter (29.4/56.3/73.3 here against
+;;;; 25.5/52.2/71.0 there, two independently built forests), so once again the whole gain
+;;;; is the MERGEABLE-AND-INFORMATIVE column -- pairs that are equal without being zero.
+;;;;
+;;;; Ten classes make that column larger than 26 did (13.2% at lambda1=3 against letter's
+;;;; 9.2%), the same direction as the plain encoding's group-sparsity result: needing
+;;;; agreement across fewer classes makes an all-class condition easier to satisfy.
+;;;;
+;;;; Threshold pruning at lambda1 10.0, no rate parameter. Unlike RUN-FUSED-LETTER this is
+;;;; paired -- one forest, pruned with the learner trained on it -- so the before/after
+;;;; difference is not confounded by unseeded bagging:
+;;;;
+;;;;   deleted 67404/99047 leaf-parents (68.1%)
+;;;;   refined accuracy 97.97 -> 97.98
+;;;;   leaves 251521 -> 184117 (-26.8%)
+;;;;   raw forest accuracy 93.27 -> 92.97
+;;;;
+;;;; Deleting two thirds of the leaf-parents costs the refined model nothing, which is what
+;;;; the criterion optimises for; the raw forest, which nothing here optimises for, gives up
+;;;; 0.30 points.
