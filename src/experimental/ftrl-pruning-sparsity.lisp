@@ -6,16 +6,37 @@
 ;;;
 ;;;   (ql:quickload :cl-random-forest-test/fixture)
 ;;;   (load "src/experimental/ftrl-pruning-sparsity.lisp")
+;;;   (in-package :cl-random-forest/src/experimental/ftrl-pruning-sparsity)
 ;;;   (run-letter-sweep)
 ;;;
 ;;; Not part of any system. See docs/superpowers/specs/2026-08-04-*.md for the design.
 
-;;; Not :CL-RANDOM-FOREST, the way src/experimental/multi-grained-scanning.lisp does it.
-;;; That facade re-exports only the exported symbols, and MAKE-L2-NORM,
-;;; COLLECT-LEAF-PARENT, CHILDREN-L2-NORM and DTREE-MAX-LEAF-INDEX -- everything the
-;;; pruning criterion is made of -- are internal. Interning them fresh in another
-;;; package is exactly the bug CLAUDE.md's "Known broken code" section describes.
-(in-package :cl-random-forest/src/random-forest)
+;;; This file needs MAKE-L2-NORM, COLLECT-LEAF-PARENT, CHILDREN-L2-NORM and
+;;; DTREE-MAX-LEAF-INDEX -- everything the pruning criterion is made of -- which are
+;;; internal to SRC/RANDOM-FOREST and not re-exported by the :CL-RANDOM-FOREST facade
+;;; (unlike src/experimental/multi-grained-scanning.lisp, which only needs exported
+;;; symbols and so lives directly in `(in-package :cl-random-forest)`). That need does
+;;; not license defining this file's own 17 helpers -- SPARSITY-REPORT, LEAF-COUNT,
+;;; SPEARMAN, *EPOCHS* and the rest -- inside SRC/RANDOM-FOREST itself: doing so would
+;;; intern them straight into the library's own package, with no collision today but a
+;;; real one waiting (e.g. issue #15's eventual real LEAF-COUNT). So this file gets its
+;;; own package instead, following the convention CLAUDE.md's "Known broken code"
+;;; section documents and example/regression/simple-regression.lisp demonstrates: :USE
+;;; CL and the CL-RANDOM-FOREST facade for everything exported, plus explicit
+;;; :IMPORT-FROM clauses naming each internal symbol this file needs from
+;;; SRC/RANDOM-FOREST and SRC/UTILS (the facade does not re-export SRC/UTILS at all).
+(defpackage :cl-random-forest/src/experimental/ftrl-pruning-sparsity
+  (:use #:cl
+        #:cl-random-forest)
+  (:import-from #:cl-random-forest/src/random-forest
+                #:make-l2-norm
+                #:collect-leaf-parent
+                #:children-l2-norm
+                #:dtree-max-leaf-index)
+  (:import-from #:cl-random-forest/src/utils
+                #:read-data))
+
+(in-package :cl-random-forest/src/experimental/ftrl-pruning-sparsity)
 
 ;;;; Sparsity metrics
 ;;;;
@@ -445,8 +466,8 @@ and have to be shifted back. example/classification/mnist.lisp does the same thi
   "Return (values forest refine-train refine-test train-target test-target) for MNIST.
 Forest settings are MNIST-FOREST's from example/classification/mnist.lisp -- the forest
 that file's PRUNING! calls operate on (refine 98.259%, 98008 leaf-parents) -- plus
-:remove-sample-indices? nil. READ-DATA is inherited from CL-RANDOM-FOREST/SRC/UTILS,
-which this package :USEs."
+:remove-sample-indices? nil. READ-DATA is imported from CL-RANDOM-FOREST/SRC/UTILS via
+this package's DEFPACKAGE, which the :CL-RANDOM-FOREST facade does not re-export."
   (let ((dir cl-random-forest-test/fixture:*dataset-dir*))
     (multiple-value-bind (datamatrix target)
         (read-data (merge-pathnames "mnist.scale" dir) 784)
@@ -471,7 +492,7 @@ which this package :USEs."
 ;;;;   (ql:quickload :cl-random-forest-test/fixture)
 ;;;;   (setf lparallel:*kernel* (lparallel:make-kernel 4))
 ;;;;   (load "src/experimental/ftrl-pruning-sparsity.lisp")
-;;;;   (in-package :cl-random-forest/src/random-forest)
+;;;;   (in-package :cl-random-forest/src/experimental/ftrl-pruning-sparsity)
 ;;;;   (multiple-value-bind (forest rd rt tg tgt) (mnist-forest) ...)
 ;;;;
 ;;;; forest accuracy: 93.46% (example/classification/mnist.lisp's reference: 93.38%)
@@ -495,7 +516,7 @@ which this package :USEs."
 ;;;;   (ql:quickload :cl-random-forest-test/fixture)
 ;;;;   (setf lparallel:*kernel* (lparallel:make-kernel 4))
 ;;;;   (load "src/experimental/ftrl-pruning-sparsity.lisp")
-;;;;   (in-package :cl-random-forest/src/random-forest)
+;;;;   (in-package :cl-random-forest/src/experimental/ftrl-pruning-sparsity)
 ;;;;   (multiple-value-bind (forest rd rt tg tgt) (mnist-forest)
 ;;;;     (print-sweep (sweep-lambda1 forest rd rt tg tgt (list 3.0 10.0 30.0))))
 ;;;;
