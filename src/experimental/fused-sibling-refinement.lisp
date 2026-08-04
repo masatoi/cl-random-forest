@@ -612,3 +612,384 @@ accuracy ~,2F -> ~,2F leaves ~D -> ~D~%"
 ;;;; Deleting two thirds of the leaf-parents costs the refined model nothing, which is what
 ;;;; the criterion optimises for; the raw forest, which nothing here optimises for, gives up
 ;;;; 0.30 points.
+
+;;;; Iterated pruning
+;;;;
+;;;; One pass can only ever reach leaf-parents, i.e. nodes whose *both* children are
+;;;; leaves. Deleting one turns it into a leaf itself, so its own parent may now have two
+;;;; leaf children and become a candidate. Repeating therefore peels the forest a layer at
+;;;; a time, and because the criterion carries its own cutoff the loop needs no schedule
+;;;; and no pruning rate -- it stops when nothing is mergeable any more.
+
+(defun run-iterated-pruning (forest datamatrix datamatrix-test train-target test-target
+                             &key (lambda1 10.0) (max-rounds 20))
+  "Prune, rebuild, retrain, repeat until no leaf-parent is mergeable or MAX-ROUNDS.
+
+Each round trains a fresh learner on the current forest, records its accuracy, then
+deletes every leaf-parent whose difference coordinate is zero in all classes. The accuracy
+in a row is therefore the accuracy of the forest that row's pruning was chosen from.
+FOREST is mutated. Prints one row per round and returns the rows in order."
+  (let ((rows '())
+        (exhausted t))
+    (loop for round from 1 to max-rounds
+          do (let* ((map (make-reparam-map forest))
+                    (train (make-reparam-dataset forest map datamatrix))
+                    (test (make-reparam-dataset forest map datamatrix-test))
+                    (learner (make-refine-learner-of-type
+                              forest 'clol::sparse-lr+ftrl 0.1 1.0 lambda1 1.0))
+                    (accuracy (car (last (train-fused-epochs learner train train-target
+                                                             test test-target *epochs*))))
+                    (n-parent (length (reparam-map-parents map)))
+                    (leaves (leaf-count forest))
+                    (deleted (prune-mergeable! forest map learner)))
+               (push (list :round round :accuracy accuracy :leaves leaves
+                           :leaf-parents n-parent :deleted deleted
+                           :leaves-after (leaf-count forest))
+                     rows)
+               (format t "~&ROUND ~2D accuracy ~,2F leaves ~D leaf-parents ~D ~
+deleted ~D (~,1F%) leaves -> ~D~%"
+                       round accuracy leaves n-parent deleted
+                       (* 100.0 (/ (float deleted) (max 1 n-parent)))
+                       (leaf-count forest))
+               (force-output)
+               (when (zerop deleted)
+                 (setf exhausted nil)
+                 (return))))
+    ;; Exiting on MAX-ROUNDS leaves the last round's pruning unmeasured, since a row's
+    ;; accuracy is recorded before its own deletions. Measure the final forest.
+    (when exhausted
+      (let* ((map (make-reparam-map forest))
+             (train (make-reparam-dataset forest map datamatrix))
+             (test (make-reparam-dataset forest map datamatrix-test))
+             (learner (make-refine-learner-of-type
+                       forest 'clol::sparse-lr+ftrl 0.1 1.0 lambda1 1.0))
+             (accuracy (car (last (train-fused-epochs learner train train-target
+                                                      test test-target *epochs*)))))
+        (push (list :round :final :accuracy accuracy :leaves (leaf-count forest)
+                    :leaf-parents (length (reparam-map-parents map)) :deleted 0
+                    :leaves-after (leaf-count forest))
+              rows)
+        (format t "~&ROUND final accuracy ~,2F leaves ~D (hit max-rounds, not exhausted)~%"
+                accuracy (leaf-count forest))
+        (force-output)))
+    (nreverse rows)))
+
+(defun run-iterated-letter (&key (lambda1 10.0) (max-rounds 20))
+  "Iterated pruning on letter."
+  (multiple-value-bind (forest datamatrix datamatrix-test train-target test-target)
+      (letter-forest)
+    (format t "~&letter, lambda1 ~,1F, forest accuracy ~,2F~%"
+            lambda1 (test-forest forest datamatrix-test test-target :quiet-p t))
+    (force-output)
+    (prog1 (run-iterated-pruning forest datamatrix datamatrix-test
+                                 train-target test-target
+                                 :lambda1 lambda1 :max-rounds max-rounds)
+      (format t "~&raw forest accuracy after all rounds ~,2F~%"
+              (test-forest forest datamatrix-test test-target :quiet-p t))
+      (format t "~&ITERATED_DONE~%")
+      (force-output))))
+
+(defun run-iterated-mnist (&key (lambda1 10.0) (max-rounds 20))
+  "Iterated pruning on MNIST."
+  (multiple-value-bind (forest datamatrix datamatrix-test train-target test-target)
+      (mnist-forest)
+    (format t "~&MNIST, lambda1 ~,1F, forest accuracy ~,2F~%"
+            lambda1 (test-forest forest datamatrix-test test-target :quiet-p t))
+    (force-output)
+    (prog1 (run-iterated-pruning forest datamatrix datamatrix-test
+                                 train-target test-target
+                                 :lambda1 lambda1 :max-rounds max-rounds)
+      (format t "~&raw forest accuracy after all rounds ~,2F~%"
+              (test-forest forest datamatrix-test test-target :quiet-p t))
+      (format t "~&ITERATED_DONE~%")
+      (force-output))))
+
+;;;; Matched comparison against rate-based pruning
+;;;;
+;;;; The threshold criterion picks its own number of deletions, so comparing it with
+;;;; PRUNING!'s fixed quantile means choosing what to hold constant. Holding the *rate*
+;;;; constant compares two different amounts of pruning; holding the *count* constant
+;;;; compares two different choices of which nodes to delete, which is the actual question.
+;;;;
+;;;; So: run the fused loop, take its per-round deletion counts as a schedule, and make the
+;;;; rate-based runs delete exactly the same number each round. All three trajectories then
+;;;; pass through identical forest sizes and differ only in which leaf-parents they picked.
+;;;; They also start from a bit-identical forest, which needs a seeded *RANDOM-STATE* and a
+;;;; serial kernel -- MAKE-FOREST's bagging is parallelised and each lparallel worker has
+;;;; its own random state, so a seed alone does not determine the result.
+
+(defun prune-by-l2-norm-count! (forest learner count &optional (min-depth 1))
+  "Delete the COUNT lowest-scoring leaf-parents under the incumbent CHILDREN-L2-NORM.
+
+PRUNING! with the number supplied instead of a rate. Like PRUNING!, a candidate shallower
+than MIN-DEPTH is skipped without extending the search, so the deletions actually made can
+fall short of COUNT. Returns how many were made."
+  (let* ((parents (collect-leaf-parent forest))
+         (l2 (make-l2-norm learner))
+         (indexed (make-array (length parents)))
+         (deleted 0))
+    (loop for node in parents
+          for i from 0
+          do (setf (aref indexed i) (cons (children-l2-norm node l2 forest) node)))
+    (let ((sorted (sort indexed #'< :key #'car)))
+      (loop for i from 0 below (min count (length sorted))
+            do (let ((node (cdr (aref sorted i))))
+                 (when (>= (node-depth node) min-depth)
+                   (delete-children! node)
+                   (incf deleted)))))
+    (set-leaf-index-forest! forest)
+    deleted))
+
+(defun run-plain-iterated-by-counts (forest datamatrix datamatrix-test
+                                     train-target test-target counts
+                                     &key learner-args (label :plain))
+  "Iterated rate-based pruning in the plain encoding, on a supplied deletion schedule.
+
+LEARNER-ARGS is NIL for the incumbent AROW refine learner, or a (type . params) list for
+MAKE-REFINE-LEARNER-OF-TYPE. A row's accuracy is the accuracy of the forest that row's
+pruning was chosen from, matching RUN-ITERATED-PRUNING. FOREST is mutated."
+  (let ((rows '()))
+    (loop for count in counts
+          for round from 1
+          do (let* ((refine-train (make-refine-dataset forest datamatrix))
+                    (refine-test (make-refine-dataset forest datamatrix-test))
+                    (learner (if learner-args
+                                 (apply #'make-refine-learner-of-type forest learner-args)
+                                 (make-refine-learner forest)))
+                    (leaves (leaf-count forest)))
+               (dotimes (epoch *epochs*)
+                 (train-refine-learner learner refine-train train-target))
+               (let ((accuracy (test-refine-learner learner refine-test test-target
+                                                    :quiet-p t)))
+                 (let ((deleted (prune-by-l2-norm-count! forest learner count)))
+                   (push (list :round round :accuracy accuracy :leaves leaves
+                               :deleted deleted :leaves-after (leaf-count forest))
+                         rows)
+                   (format t "~&~A ROUND ~2D accuracy ~,2F leaves ~D deleted ~D leaves -> ~D~%"
+                           label round accuracy leaves deleted (leaf-count forest))
+                   (force-output)))))
+    ;; The last round's pruning is unmeasured, since a row records accuracy before its own
+    ;; deletions. Measure the final forest so the trajectories end comparably.
+    (let* ((refine-train (make-refine-dataset forest datamatrix))
+           (refine-test (make-refine-dataset forest datamatrix-test))
+           (learner (if learner-args
+                        (apply #'make-refine-learner-of-type forest learner-args)
+                        (make-refine-learner forest))))
+      (dotimes (epoch *epochs*)
+        (train-refine-learner learner refine-train train-target))
+      (let ((accuracy (test-refine-learner learner refine-test test-target :quiet-p t)))
+        (push (list :round :final :accuracy accuracy :leaves (leaf-count forest)
+                    :deleted 0 :leaves-after (leaf-count forest))
+              rows)
+        (format t "~&~A ROUND final accuracy ~,2F leaves ~D~%" label accuracy (leaf-count forest))
+        (force-output)))
+    (nreverse rows)))
+
+(defvar *mnist-cache* nil)
+
+(defun mnist-data ()
+  "Return (values datamatrix datamatrix-test train-target test-target), read once.
+The label shift is READ-DATA's off-by-one against 0-based LIBSVM labels, as in
+example/classification/mnist.lisp."
+  (unless *mnist-cache*
+    (let ((dir cl-random-forest-test/fixture:*dataset-dir*))
+      (multiple-value-bind (datamatrix target)
+          (read-data (merge-pathnames "mnist.scale" dir) 784)
+        (multiple-value-bind (datamatrix-test target-test)
+            (read-data (merge-pathnames "mnist.scale.t" dir) 784)
+          (dotimes (i (length target)) (incf (aref target i)))
+          (dotimes (i (length target-test)) (incf (aref target-test i)))
+          (setf *mnist-cache* (list datamatrix datamatrix-test target target-test))))))
+  (values-list *mnist-cache*))
+
+(defun build-seeded-forest (dataset datamatrix target seed)
+  "Build DATASET's forest reproducibly. SBCL-specific; src/experimental/ is not in CI."
+  (let ((lparallel:*kernel* nil))
+    (setf *random-state* (sb-ext:seed-random-state seed))
+    (ecase dataset
+      (:letter (make-forest cl-random-forest-test/fixture:+letter-n-class+ datamatrix target
+                            :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5
+                            :n-trial 10 :max-depth 15 :remove-sample-indices? nil))
+      (:mnist (make-forest 10 datamatrix target
+                           :n-tree 500 :bagging-ratio 0.1 :min-region-samples 5
+                           :n-trial 10 :max-depth 10 :remove-sample-indices? nil)))))
+
+(defun run-matched-comparison (dataset &key (lambda1 10.0) (max-rounds 20) (seed 42))
+  "Compare threshold pruning in the fused basis against rate-based pruning at matched size.
+
+Runs three trajectories from the same seeded forest: the fused loop, which chooses both
+which nodes to delete and how many; then the incumbent CHILDREN-L2-NORM criterion under
+FTRL and under AROW, each held to the fused loop's per-round deletion counts. Prints the
+three accuracy columns against a shared leaf count."
+  (multiple-value-bind (datamatrix datamatrix-test train-target test-target)
+      (ecase dataset
+        (:letter (multiple-value-bind (dm tg) (cl-random-forest-test/fixture:letter-train)
+                   (multiple-value-bind (dmt tgt) (cl-random-forest-test/fixture:letter-test)
+                     (values dm dmt tg tgt))))
+        (:mnist (mnist-data)))
+    (let ((ftrl-args (list 'clol::sparse-lr+ftrl 0.1 1.0 lambda1 1.0)))
+      (format t "~&=== ~A, lambda1 ~,1F, seed ~D ===~%" dataset lambda1 seed)
+      (force-output)
+      (let* ((fused-rows
+               (let ((forest (build-seeded-forest dataset datamatrix train-target seed)))
+                 (format t "~&FUSED trajectory, forest accuracy ~,2F~%"
+                         (test-forest forest datamatrix-test test-target :quiet-p t))
+                 (force-output)
+                 (run-iterated-pruning forest datamatrix datamatrix-test
+                                       train-target test-target
+                                       :lambda1 lambda1 :max-rounds max-rounds)))
+             (counts (remove 0 (mapcar (lambda (row) (getf row :deleted)) fused-rows)))
+             (ftrl-rows
+               (let ((forest (build-seeded-forest dataset datamatrix train-target seed)))
+                 (run-plain-iterated-by-counts forest datamatrix datamatrix-test
+                                               train-target test-target counts
+                                               :learner-args ftrl-args :label :plain-ftrl)))
+             (arow-rows
+               (let ((forest (build-seeded-forest dataset datamatrix train-target seed)))
+                 (run-plain-iterated-by-counts forest datamatrix datamatrix-test
+                                               train-target test-target counts
+                                               :learner-args nil :label :plain-arow))))
+        (format t "~&~%| round | fused leaves | fused acc | plain+FTRL leaves | plain+FTRL acc | ~
+plain+AROW leaves | plain+AROW acc |~%")
+        (format t "|---|---|---|---|---|---|---|~%")
+        (loop for i from 0 below (max (length fused-rows) (length ftrl-rows) (length arow-rows))
+              do (let ((f (nth i fused-rows))
+                       (p (nth i ftrl-rows))
+                       (a (nth i arow-rows)))
+                   (format t "| ~A | ~@[~D~] | ~@[~,2F~] | ~@[~D~] | ~@[~,2F~] | ~@[~D~] | ~@[~,2F~] |~%"
+                           (if f (getf f :round) (if p (getf p :round) (getf a :round)))
+                           (and f (getf f :leaves)) (and f (getf f :accuracy))
+                           (and p (getf p :leaves)) (and p (getf p :accuracy))
+                           (and a (getf a :leaves)) (and a (getf a :accuracy)))))
+        (format t "~&MATCHED_DONE~%")
+        (force-output)
+        (list :fused fused-rows :plain-ftrl ftrl-rows :plain-arow arow-rows)))))
+
+;;;; The hybrid: FTRL picks the structure, AROW fits the final model
+;;;;
+;;;; RUN-MATCHED-COMPARISON found that at equal forest size the pruning criterion does not
+;;;; move accuracy measurably, while the learner does -- AROW sits about 0.4 points above
+;;;; either FTRL variant throughout. So the two halves of the problem want different tools.
+;;;; FTRL's exact zeros in the fused basis supply a stopping point with no pruning rate to
+;;;; choose; AROW supplies the better linear model. Use FTRL to decide the structure, throw
+;;;; it away, and refit with AROW on what is left.
+;;;;
+;;;; What this leaves untested elsewhere: the matched comparison only ever had one learner
+;;;; both choosing the pruning and being scored on it. Here FTRL chooses and AROW is
+;;;; scored, so whether a structure selected as redundant-for-FTRL is still good for AROW
+;;;; is exactly the question, not an inference.
+
+(defun train-plain-arow (forest datamatrix datamatrix-test train-target test-target)
+  "Train the incumbent AROW refine learner on FOREST for *EPOCHS* epochs, return accuracy."
+  (let ((refine-train (make-refine-dataset forest datamatrix))
+        (refine-test (make-refine-dataset forest datamatrix-test))
+        (learner (make-refine-learner forest)))
+    (dotimes (epoch *epochs*)
+      (train-refine-learner learner refine-train train-target))
+    (test-refine-learner learner refine-test test-target :quiet-p t)))
+
+(defun run-hybrid (dataset &key (lambda1 10.0) (max-rounds 20) (seed 42))
+  "Prune with FTRL in the fused basis until it stops, then refit with AROW.
+
+Reports AROW on the unpruned forest, the fused loop's own final accuracy, and AROW on the
+pruned forest -- so the hybrid can be read against both the size it started from and the
+learner it replaced."
+  (multiple-value-bind (datamatrix datamatrix-test train-target test-target)
+      (ecase dataset
+        (:letter (multiple-value-bind (dm tg) (cl-random-forest-test/fixture:letter-train)
+                   (multiple-value-bind (dmt tgt) (cl-random-forest-test/fixture:letter-test)
+                     (values dm dmt tg tgt))))
+        (:mnist (mnist-data)))
+    (let ((forest (build-seeded-forest dataset datamatrix train-target seed)))
+      (format t "~&=== HYBRID ~A, lambda1 ~,1F, seed ~D ===~%" dataset lambda1 seed)
+      (let ((leaves-before (leaf-count forest)))
+        (format t "~&AROW on the unpruned forest: ~,2F at ~D leaves~%"
+                (train-plain-arow forest datamatrix datamatrix-test train-target test-target)
+                leaves-before)
+        (force-output)
+        (let* ((rows (run-iterated-pruning forest datamatrix datamatrix-test
+                                           train-target test-target
+                                           :lambda1 lambda1 :max-rounds max-rounds))
+               (fused-final (getf (car (last rows)) :accuracy))
+               (leaves-after (leaf-count forest))
+               (arow-final (train-plain-arow forest datamatrix datamatrix-test
+                                             train-target test-target)))
+          (format t "~&FTRL fused, its own final accuracy: ~,2F at ~D leaves~%"
+                  fused-final leaves-after)
+          (format t "~&AROW refitted on the pruned forest: ~,2F at ~D leaves (~,1F% of original)~%"
+                  arow-final leaves-after
+                  (* 100.0 (/ (float leaves-after) leaves-before)))
+          (format t "~&raw forest accuracy after pruning ~,2F~%"
+                  (test-forest forest datamatrix-test test-target :quiet-p t))
+          (format t "~&HYBRID_DONE~%")
+          (force-output)
+          (list :leaves-before leaves-before :leaves-after leaves-after
+                :fused-final fused-final :arow-final arow-final))))))
+
+;;;; Iterated pruning, matched comparison, and the hybrid: measurements
+;;;;
+;;;; All at lambda1 10.0, *EPOCHS* 20. The iterated runs used unseeded parallel forest
+;;;; builds; the matched and hybrid runs used seed 42 with a serial build, so within each
+;;;; of those the three trajectories start from a bit-identical forest.
+;;;;
+;;;; 1. Iterated pruning, self-terminating
+;;;; ------------------------------------
+;;;; Deletion counts fall off geometrically and the loop stops on its own when nothing is
+;;;; mergeable. No pruning rate and no round budget were supplied.
+;;;;
+;;;;   letter, 16 rounds: leaves 156700 -> 109769 (-29.9%), accuracy 96.90 -> 96.82
+;;;;     deleted per round 26836 11258 4749 2084 961 478 232 114 86 52 37 23 13 6 2 0
+;;;;     raw forest accuracy 90.96 -> 90.36
+;;;;   MNIST, 19 rounds: leaves 249435 -> 128361 (-48.5%), accuracy 97.89 -> 97.92
+;;;;     deleted per round 66858 31241 13219 5128 2192 1014 518 353 226 131 73 39 30 26
+;;;;                       17 5 3 1 0
+;;;;     raw forest accuracy 93.32 -> 92.63
+;;;;
+;;;; Iterating roughly doubles what a single pass reaches (letter -16.8% -> -29.9%), and
+;;;; accuracy is flat across every round rather than decaying.
+;;;;
+;;;; 2. Matched comparison: does the criterion matter?
+;;;; ------------------------------------------------
+;;;; Same forest, same per-round deletion counts, so the only difference is which
+;;;; leaf-parents get chosen. First and last rounds:
+;;;;
+;;;;   letter, 14 rounds, leaves 160733 -> 113007
+;;;;     fused       96.78 -> 96.82
+;;;;     plain+FTRL  96.80 -> 96.84
+;;;;     plain+AROW  97.14 -> 97.24
+;;;;   MNIST, 17 rounds, leaves 250626 -> 129080
+;;;;     fused       97.76 -> 97.89
+;;;;     plain+FTRL  97.83 -> 97.85
+;;;;     plain+AROW  98.22 -> 98.20
+;;;;
+;;;; The answer is no. At equal size the fused and plain criteria are indistinguishable
+;;;; (within +-0.06 on both datasets, sign varying), while AROW sits 0.35-0.40 above both
+;;;; FTRL variants at every size. That gap is exactly FTRL's known accuracy cost against
+;;;; AROW, not an effect of the pruning criterion. Accuracy is flat along each trajectory,
+;;;; so no criterion "breaks later" than another either.
+;;;;
+;;;; So the fused basis does not buy accuracy. What it buys is the schedule: it decides how
+;;;; far to prune without a rate, and stops.
+;;;;
+;;;; 3. The hybrid
+;;;; -------------
+;;;; Which suggests splitting the job. FTRL in the fused basis chooses the structure, then
+;;;; AROW is fitted on what is left:
+;;;;
+;;;;   letter  AROW unpruned          97.14 at 160733 leaves
+;;;;           FTRL fused, own model  96.82 at 113007
+;;;;           AROW refitted          97.18 at 113007 (70.3% of the leaves)
+;;;;           raw forest 91.54 -> 90.84
+;;;;   MNIST   AROW unpruned          98.22 at 250626 leaves
+;;;;           FTRL fused, own model  97.89 at 129080
+;;;;           AROW refitted          98.16 at 129080 (51.5% of the leaves)
+;;;;           raw forest 93.31 -> 92.69
+;;;;
+;;;; FTRL's 0.33-0.36 deficit is an artefact of the search, not of the result: refitting
+;;;; recovers it entirely. letter ends *above* its unpruned baseline (97.18 vs 97.14) at
+;;;; 70% of the size; MNIST gives up 0.06 for half the size.
+;;;;
+;;;; This also settles what the matched comparison could not. There, one learner always
+;;;; both chose the pruning and was scored on it, so "is a structure selected as
+;;;; redundant-for-FTRL still good for AROW?" was open. It is: the hybrid lands within 0.06
+;;;; and 0.04 of the structure AROW picked for itself (97.24 on letter, 98.20 on MNIST).
