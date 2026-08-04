@@ -24,8 +24,10 @@ matched rates (0.1, 0.5) produced no accuracy difference after the standard
 rebuild-and-retrain step. FTRL's payoff is a data-driven stopping signal, not a better
 pruning outcome, and getting it costs 0.3-0.9 accuracy points across the lambda1 range
 where it is useful. A second dataset with fewer classes (MNIST, 10 vs `letter`'s 26)
-reproduces this pattern at an equal or lower accuracy cost -- see "MNIST cross-check"
-below.
+reproduces the sparsity finding -- leaf-parent-zero-rate clears the operational range at
+an equal or lower accuracy cost -- though MNIST was swept for sparsity only; `pruning!`
+was not run end to end on it there, so the end-to-end pruning result above is `letter`-only
+-- see "MNIST cross-check" below.
 
 ## Premises
 
@@ -179,18 +181,30 @@ group effect beyond chance.
 | 30 | 99.0% | 79.9% | 77.0% | ~1.04x |
 | 100 | 99.6% | 90.7% | 90.1% | ~1.01x |
 
-At every lambda1 measured, actual leaf-zero-rate exceeds the independence prediction --
-group sparsity across the 26 classes is real, not an artifact, confirming the mechanism
-the design doc's MNIST "670 dead border pixels" anecdote proposed but did not quantify
-for this project. The excess is largest in relative terms at moderate sparsity (three
-orders of magnitude at lambda1=1) and narrows toward 1x as element-zero-rate itself
-approaches 100% (lambda1=30/100): once almost every element is already zero, independence
-and correlation predict nearly the same number, so the ratio necessarily compresses even
-though the correlation has not gone away -- a ceiling effect, not a sign that correlation
-weakens. At lambda1=10, the operating point used for the ranking and pruning
-comparisons above, the measured rate (63.7%) is 1.4x the independence prediction
-(44.1%): roughly 20 of its 63.7 percentage points come from cross-class correlation
-rather than from 26 independent coin flips landing zero together.
+Up to lambda1=30, actual leaf-zero-rate exceeds the independence prediction even after
+accounting for the one-decimal rounding on element-zero-rate: at lambda1=30,
+element-zero-rate's true value lies in [98.95%, 99.05%], whose upper end predicts at most
+`0.9905^26` = 78.0%, still below the measured 79.9%. Group sparsity across the 26 classes
+is real over that range, not an artifact, confirming the mechanism the design doc's MNIST
+"670 dead border pixels" anecdote proposed but did not quantify for this project.
+
+The lambda1=100 row cannot be signed the same way. Element-zero-rate there is recorded as
+99.6%, one decimal place, so its true value could be anywhere in [99.55%, 99.65%]; at the
+top of that interval, `0.9965^26` = 91.3%, which is *above* the measured leaf-zero-rate of
+90.7%. Whether the measured rate exceeds or falls short of the independence prediction at
+lambda1=100 is therefore undetermined by the precision recorded here -- this is not a
+small excess, it is a sign that cannot be read off these numbers, and this report does not
+re-measure at higher precision to settle it.
+
+The excess, where it is established (lambda1<=30), is largest in relative terms at
+moderate sparsity (three orders of magnitude at lambda1=1) and narrows toward 1x as
+element-zero-rate itself approaches 100% (lambda1=10/30): once almost every element is
+already zero, independence and correlation predict nearly the same number, so the ratio
+necessarily compresses even though the correlation has not gone away -- a ceiling effect,
+not a sign that correlation weakens. At lambda1=10, the operating point used for the
+ranking and pruning comparisons above, the measured rate (63.7%) is 1.4x the independence
+prediction (44.1%): roughly 20 of its 63.7 percentage points come from cross-class
+correlation rather than from 26 independent coin flips landing zero together.
 
 (One further, unrequested but cheap comparison: leaf-parent-zero-rate at lambda1=10
 (40.9%) is close to leaf-zero-rate squared (63.7%^2 = 40.6%) -- unlike the
@@ -375,8 +389,10 @@ value used throughout the ranking and pruning experiments, the accuracy cost is 
   in this project, including the ones in this report, used a fixed epoch count instead of
   that mechanism. FTRL makes the underlying bug worse, not better: it carries
   per-coordinate `z` and `n` accumulators on top of the weight vector, all of which would
-  need deep copying to fix this. This is a real bug worth filing as a separate issue; it
-  is documented here, not filed, per this task's scope.
+  need deep copying to fix this. Filed as issue #20,
+  https://github.com/masatoi/cl-random-forest/issues/20 ("train-refine-learner-process
+  never rolls back to the best epoch"); the mechanism above is the detail needed to fix
+  it.
 - **No search over FTRL's other hyperparameters.** `alpha`/`beta`/`lambda2` were held at
   `0.1`/`1.0`/`1.0` throughout; only `lambda1` was swept. A different `alpha`/`beta`
   could shift where the sparsity/accuracy tradeoff curve sits.
