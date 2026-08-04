@@ -55,7 +55,7 @@ Tests are split into feature systems, each of which can be run on its own:
 | `cl-random-forest-test/dataset` | dataset download and conversion (3) |
 | `cl-random-forest-test/decision-tree` | decision tree accuracy (2) |
 | `cl-random-forest-test/forest` | random forest accuracy (2) |
-| `cl-random-forest-test/refinement` | global refinement accuracy (2) |
+| `cl-random-forest-test/refinement` | global refinement accuracy and learner-type plumbing (6) |
 | `cl-random-forest-test/parallel` | parallelized training accuracy (4, SBCL only) |
 | `cl-random-forest-test/regression` | univariate regression behaviour (5) |
 | `cl-random-forest-test/pruning` | global pruning behaviour (5) |
@@ -74,8 +74,9 @@ There is no lint step. CI (`.github/workflows/ci.yml`) runs the matrix
 {sbcl-bin, ccl-bin} × {ubuntu-latest, macOS-latest}.
 
 Test/example caveats:
-- `cl-random-forest-test/regression` and `.../pruning` use deterministic synthetic data from
-  `cl-random-forest-test/fixture` and need no network. Everything else downloads datasets.
+- `cl-random-forest-test/regression`、`.../pruning`、および `.../refinement` の
+  `refine-learner-*` 4 テストは `cl-random-forest-test/fixture` の決定的な合成データを
+  使うのでネットワーク不要。それ以外はデータセットをダウンロードする。
 - Seven of those tests are **property assertions**, not pinned accuracy numbers, and three
   deliberately pin bugs that are still open: `regression-refine-learner-default-gamma-diverges`
   (issue #16), `pruning-strands-leaves-without-sample-indices` (issue #14) and
