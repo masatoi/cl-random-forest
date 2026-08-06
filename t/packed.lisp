@@ -6,7 +6,10 @@
   (:import-from #:cl-random-forest/src/random-forest
                 #:find-leaf
                 #:dtree-root
-                #:node-leaf-index))
+                #:node-leaf-index
+                #:node-test-attribute
+                #:node-left-node
+                #:node-sample-indices))
 (in-package :cl-random-forest-test/packed)
 
 (defun synthetic-forest (&key (remove-sample-indices? nil) (n-tree 30))
@@ -67,6 +70,32 @@
         (ok (handler-case (progn (build-packed-topology forest) nil)
               (packed-build-error () t))
             "after pruning, build-packed-topology signals on the stranded leaves")))))
+
+(deftest packed-topology-refuses-a-leaf-with-no-samples-to-count
+  ;; A leaf can have nothing to count without its SAMPLE-INDICES being NIL. When a split's
+  ;; sampled attribute is constant over the node's rows, MAKE-RANDOM-TEST produces
+  ;; threshold = min = max and every row goes left, leaving the right child a leaf holding
+  ;; a real but zero-length array. CLASS-DISTRIBUTION divides by a zero sum in both cases
+  ;; and returns a uniform distribution rather than signalling, so both must be rejected.
+  ;; It is rare but not hypothetical: 3 of letter's 26936 leaves at :max-depth 20.
+  (with-serial-kernel
+    (multiple-value-bind (datamatrix target) (synthetic-classification-train)
+      (declare (ignore target))
+      (declare (ignorable datamatrix))
+      (let ((forest (synthetic-forest)))
+        (ok (packed-topology-p (build-packed-topology forest))
+            "the forest packs while every leaf has samples")
+        ;; Empty one leaf's indices, which is what such a split leaves behind.
+        (labels ((leftmost-leaf (node)
+                   (if (node-test-attribute node)
+                       (leftmost-leaf (node-left-node node))
+                       node)))
+          (setf (node-sample-indices
+                 (leftmost-leaf (dtree-root (first (forest-dtree-list forest)))))
+                (make-array 0 :element-type 'fixnum)))
+        (ok (handler-case (progn (build-packed-topology forest) nil)
+              (packed-build-error () t))
+            "a leaf with an empty sample-indices array is rejected")))))
 
 (deftest packed-topology-counts-add-up
   (with-serial-kernel

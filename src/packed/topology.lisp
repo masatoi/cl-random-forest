@@ -93,11 +93,21 @@ Global Refinement uses."
                   (walk (node-left-node node) (1+ depth))
                   (walk (node-right-node node) (1+ depth)))
                  (t
-                  (unless (node-sample-indices node)
-                    (error 'packed-build-error
-                           :detail (format nil "a leaf at depth ~D has no sample indices, ~
-so its class distribution would come out uniform without any error being signalled ~
-(issue #14) -- rebuild the forest with :remove-sample-indices? nil" depth)))))))
+                  ;; NIL is not the only way to have nothing to count. A split whose
+                  ;; sampled attribute is constant over the node's rows gets
+                  ;; threshold = min = max from MAKE-RANDOM-TEST, and with the >=
+                  ;; convention every row goes left -- leaving the right child a leaf whose
+                  ;; SAMPLE-INDICES is a real but zero-length array. CLASS-DISTRIBUTION
+                  ;; divides by a zero sum either way and returns a uniform distribution
+                  ;; without signalling. Measured: 3 of letter's 26936 leaves at
+                  ;; :max-depth 20.
+                  (let ((indices (node-sample-indices node)))
+                    (unless (and indices (plusp (length indices)))
+                      (error 'packed-build-error
+                             :detail (format nil "a leaf at depth ~D has ~:[no sample ~
+indices at all~;an empty sample-indices array~], so its class distribution would come out ~
+uniform without any error being signalled -- if the forest has been pruned, rebuild it ~
+with :remove-sample-indices? nil (issue #14)" depth indices))))))))
       (dolist (dtree dtrees)
         (walk (dtree-root dtree) 0)))))
 
