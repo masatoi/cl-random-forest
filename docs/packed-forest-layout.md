@@ -51,8 +51,28 @@ These are not preferences. Each has bitten during this work.
 every datum. Folding each leaf to its own argmax and taking a majority vote is a
 *different classifier*: an earlier sketch in the repository did that and differed on 48 of
 10000 MNIST predictions without anyone noticing. The forest sums normalised distributions.
-Ties in `argmax` go to the lowest class index. `count-packed-forest-disagreements` exists
-to enforce this and must read zero.
+Ties in `argmax` go to the lowest class index.
+
+Checking the argmax is not enough on its own: two different distributions can share one.
+Compared element by element against `class-distribution-forest`, the packed distributions
+are **bit-identical** — 0 of 2000 rows differing on either dataset, worst absolute
+difference 0.0. That is achievable rather than lucky, because the same floats are summed in
+the same tree order and class order, and it is a much sharper invariant than agreement on
+the class. Both checks belong in the test.
+
+**C1a. A leaf with no `sample-indices` must not be baked in silently.** `class-distribution`
+divides by the sum of its counts, and when that sum is zero it returns a *uniform*
+distribution rather than signalling:
+
+```lisp
+(if (= sum 0.0)
+    (setf (aref class-count-array i) (/ 1.0 n-class))
+    (setf (aref class-count-array i) (/ (aref class-count-array i) sum)))
+```
+
+Pruning strands exactly such leaves when `:remove-sample-indices?` is left at its default
+(issue #14). A builder that reads them gets a uniform distribution and freezes it into the
+model with nothing to show anything went wrong. The builder should signal instead.
 
 **C2. Splits are numeric only.** `(>= (aref datamatrix datum-index attribute) threshold)`
 takes the **left** branch. There are no categorical splits and no missing-value handling,
@@ -87,7 +107,11 @@ on the packed form with no payload array and no remapping.
 ## 3. The layout as implemented
 
 Structure of arrays, one array per node attribute, flattened across the whole forest rather
-than per tree.
+than per tree. LightGBM-inspired rather than a copy of it: the internal-node arrays and the
+complemented leaf index are LightGBM's, but it numbers internal nodes in split-creation
+order where this uses preorder, its arrays are per tree where these span the forest, and
+its leaf value is a scalar — multiclass GBDT trains a separate tree per class, so it never
+has anything like the `n-leaf x n-class` table below.
 
 ```lisp
 (defstruct (packed-forest (:constructor %make-packed-forest))
@@ -192,10 +216,12 @@ MB the same way. A regression forest, whose leaf value is a scalar, would be far
 Measured on a 200-tree letter forest at depth 12, 58171 internal nodes and 58371 leaves:
 
 - **`left[i]` is always exactly `i + 1` when it is not a leaf.** All 28528 of the internal
-  left children satisfied it. This follows from preorder emission and leaves not taking
-  slots, and it means the `left` array carries no information beyond "is the left child a
-  leaf, and if so which one". A scheme that encoded that in one bit plus a leaf number
-  could drop a whole 4-byte-per-node array.
+  left children satisfied it, which follows from preorder emission with leaves taking no
+  slots. This does *not* make the array redundant, as an earlier draft of this document
+  claimed. The other 29643 entries — 51% of them — are leaf numbers, and those have to be
+  stored somewhere. Removing the array means keeping a left-is-leaf bit plus those numbers,
+  reachable only through a rank structure or a second index, and the extra decoding and
+  indirection would plausibly cost more than the 4 bytes per node saves. Low priority.
 - **`right[i]` is always ahead of `i` or a leaf.** All 58171 satisfied it, so right children
   are forward references only.
 - Internal nodes and leaves are within one of each other per tree (58171 against 58371 for
@@ -216,20 +242,45 @@ needs care about where the bit is read from.
 **Narrow the feature index to 16 bits.** Sufficient for both datasets here and for most
 tabular problems; halves that array. Needs a fallback for wide data.
 
-**Bin the thresholds, as LightGBM actually does.** LightGBM does not compare floats at
-prediction time: it bins each feature during training and stores `threshold_in_bin_` as an
-integer, comparing integers. That would replace a 4-byte float with a 1- or 2-byte bin
-index and turn a float comparison into an integer one, but it changes training, not just
-the layout, and it is an approximation of the split — so it collides with constraint C1
-unless the binning is exact.
+**Store the leaf distributions sparsely.** Measured rather than guessed: on 200-tree
+depth-10 forests the mean number of non-zero classes per leaf is **2.04 on letter (of 26
+classes) and 2.06 on MNIST (of 10)**, and the distribution is concentrated at one —
+
+| non-zero classes | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| letter leaves (45882) | 21685 | 13016 | 6306 | 2315 | 924 | 554 | 345 | 240 |
+| MNIST leaves (104452) | 43717 | 33295 | 15337 | 6395 | 2974 | 1470 | 755 | 340 |
+
+so nearly half of all leaves are pure. A CSR payload -- `offsets` u32 per leaf, then
+`class` u8/u16 and `probability` single-float per non-zero -- costs `4 + 5s` bytes per leaf
+against dense's `4C`: **104 → 14.2 bytes on letter, 40 → 14.3 on MNIST**, a 7.3x and 2.8x
+reduction of the two thirds of memory that the leaf table occupies. Skipping zeros is
+exact, not approximate: the values are non-negative, so omitting a `+ 0.0` changes no sum,
+and C1's bit-identical agreement survives.
+
+**Bin the thresholds.** LightGBM keeps a binned form of each threshold,
+`threshold_in_bin_`, alongside the real one. An earlier draft of this document said it
+therefore "does not compare floats at prediction time", which is wrong: the binned
+comparison is used when predicting over LightGBM's own internal `Dataset`, while ordinary
+prediction from raw feature values compares the `double threshold_`. Binning here would
+replace a 4-byte float with a 1- or 2-byte index, and a float comparison with an integer
+one, but it changes training rather than only the layout — and unless the binning is exact
+it approximates the split, which collides with constraint C1.
 
 **Array of structures rather than structure of arrays.** This is the sharpest open
 question. SoA is right when a pass touches one field across many nodes. Tree descent
-touches *all four fields of one node* and then jumps somewhere unpredictable — which is the
-case AoS is for: one cache line per node instead of three or four separate streams. A node
-packed as (feature:u16, threshold:f32, right:s32, flags) fits in 16 bytes, four to a cache
-line. This was not tried, and nothing measured here distinguishes it. LightGBM uses SoA,
-but LightGBM's arrays are per-tree and small.
+touches *all fields of one node* and then jumps somewhere unpredictable, which is the case
+AoS is for: one cache line per node instead of three or four separate streams. Not tried,
+and nothing measured here distinguishes it.
+
+A caution, and a way round it. Declaring a `(simple-vector n)` of structs does not give a
+C-style array of unboxed structs; it gives an array of *references*, which is worse than
+SoA rather than better. Real AoS needs either implementation-specific raw memory, or
+interleaving by hand — and the second is portable. Node `i`'s fields can live at indices
+`4i .. 4i+3` of one `(simple-array single-float (*))`, with the feature index and the
+right-child index stored as floats: every integer up to 2^24 is exactly representable in
+single-float, which covers 784 features and 259401 internal nodes with room to spare. No
+bit-casting, so no implementation extension, at the cost of a 16.7M-node ceiling.
 
 **Cache-conscious node ordering.** Preorder is one choice; breadth-first, or a
 van Emde Boas layout, would change which nodes share a cache line. Depth-5 trees fit in
@@ -250,6 +301,9 @@ Measured: exact agreement with the library on every datum of both test sets, at 
 configuration; throughput for all four representations on one forest; bytes for the array
 layouts and machine code size for the compiled one; build time; the effect of each of the
 three design steps in isolation.
+
+Also measured since the first draft: distributions element by element rather than only the
+argmax (bit-identical), and the non-zero profile of the leaf distributions.
 
 Not measured: parallel scaling of the packed layout specifically — the array layout reached
 3.7-4.9x on eight threads, and packed's working set is 3.5 times smaller, so it should do
