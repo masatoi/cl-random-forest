@@ -29,6 +29,7 @@
            #:predict-regression-forest
            #:test-regression-forest
            #:make-refine-learner
+           #:make-refine-learner-of-type
            #:predict-refine-learner
            #:make-refine-dataset
            #:train-refine-learner
@@ -811,13 +812,41 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
           do (setf sum (+ sum (dtree-max-leaf-index dtree)))
              (setf (aref offset i) sum))))
 
+(defun refine-learner-input-dimension (forest)
+  "Size of the global leaf index space FOREST maps data into.
+This is the cumulative leaf count over every tree, i.e. the input dimension every
+refine learner needs."
+  (loop for n-leaves in (mapcar #'dtree-max-leaf-index (forest-dtree-list forest))
+        sum n-leaves))
+
 (defun make-refine-learner (forest &optional (gamma 10.0))
   (let ((n-class (forest-n-class forest))
-        (input-dim (loop for n-leaves in (mapcar #'dtree-max-leaf-index (forest-dtree-list forest))
-                         sum n-leaves)))
+        (input-dim (refine-learner-input-dimension forest)))
     (if (> n-class 2)
         (clol:make-one-vs-rest input-dim n-class 'sparse-arow gamma)
         (clol:make-sparse-arow input-dim gamma))))
+
+(defun make-refine-learner-of-type (forest learner-type &rest learner-params)
+  "Build a multiclass refine learner backed by LEARNER-TYPE instead of SPARSE-AROW.
+
+LEARNER-TYPE is a cl-online-learning sparse learner symbol -- SPARSE-LR+FTRL, say --
+and LEARNER-PARAMS are that learner's constructor arguments after the input dimension.
+CLOL:MAKE-ONE-VS-REST resolves the type by SYMBOL-NAME, so the symbol's home package
+does not matter.
+
+Multiclass only. The binary path still goes through MAKE-REFINE-LEARNER: ONE-VS-REST
+is undefined below 3 classes, and the FTRL work this exists for measures multiclass
+pruning."
+  (let ((n-class (forest-n-class forest)))
+    (unless (> n-class 2)
+      (error "MAKE-REFINE-LEARNER-OF-TYPE needs more than 2 classes, got ~D. ~
+Use MAKE-REFINE-LEARNER for the binary case."
+             n-class))
+    (apply #'clol:make-one-vs-rest
+           (refine-learner-input-dimension forest)
+           n-class
+           learner-type
+           learner-params)))
 
 (defun predict-refine-learner (forest refine-learner datamatrix datum-index)
   (let ((sv (make-refine-vector forest datamatrix datum-index)))
@@ -887,6 +916,10 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
          (n-tree (length (svref refine-dataset 0)))
          (n-class (clol::one-vs-rest-n-class refine-learner))
          (learners (clol::one-vs-rest-learners-vector refine-learner))
+         ;; Not CLOL:SPARSE-AROW-UPDATE directly: ONE-VS-REST stores the update
+         ;; function its learner type was built with, and reading it from there is what
+         ;; lets MAKE-REFINE-LEARNER-OF-TYPE swap in SPARSE-LR+FTRL.
+         (update (clol::one-vs-rest-learner-update refine-learner))
          (sv-index (make-array n-tree :element-type 'fixnum :initial-element 0))
          (sv-val (make-array n-tree :element-type 'single-float :initial-element 1.0))
          (sv-vec (make-array n-class)))
@@ -897,9 +930,10 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
       (loop for datum-id fixnum from 0 below len do
         (setf (clol.vector:sparse-vector-index-vector (svref sv-vec class-id))
               (svref refine-dataset datum-id))
-        (clol:sparse-arow-update (svref learners class-id)
-                                 (svref sv-vec class-id)
-                                 (if (= (aref target datum-id) class-id) 1.0 -1.0))))))
+        (funcall update
+                 (svref learners class-id)
+                 (svref sv-vec class-id)
+                 (if (= (aref target datum-id) class-id) 1.0 -1.0))))))
 
 ;; dataset: simple vector of refine-dataset
 (defun set-activation-matrix!
