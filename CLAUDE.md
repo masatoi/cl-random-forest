@@ -120,7 +120,8 @@ Note `src/utils` is *not* reexported; import from it explicitly.
 - `src/feature-importance.lisp` — Mean Decrease Accuracy (OOB permutation) and Mean Decrease Impurity.
 - `src/reconstruction.lisp` — invert a leaf assignment back into an approximate input vector.
 - `src/experimental/` — **not part of the system**; nothing depends on these packages, so they are
-  never compiled by `quickload`. `workspace.lisp` is a REPL scratch file.
+  never compiled by `quickload`. Each file says at its top how to load it by hand, and carries
+  its own measurements as trailing comments.
 - `example/` — also not part of the system; load individual files manually.
 
 ### Data representation (strict)

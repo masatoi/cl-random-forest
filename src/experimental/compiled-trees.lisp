@@ -3,11 +3,13 @@
 ;;; Compiling decision trees into Lisp functions.
 ;;;
 ;;; A trained tree is a fixed nest of comparisons, so it can be emitted as a nest of IFs
-;;; and handed to COMPILE. src/experimental/workspace.lisp has had a sketch of this
-;;; (CONSTRUCT-DTREE-LAMBDA) since before the repository moved to single-float -- it still
-;;; declares its datamatrix DOUBLE-FLOAT, so under (safety 0) it would read today's arrays
-;;; as the wrong type rather than complain. No timings were ever recorded next to it. This
-;;; file is that idea rebuilt against the current representation and actually measured.
+;;; and handed to COMPILE. src/experimental/workspace.lisp carried a sketch of this
+;;; (CONSTRUCT-DTREE-LAMBDA) from before the repository moved to single-float: it still
+;;; declared its datamatrix DOUBLE-FLOAT, so under (safety 0) it would have read today's
+;;; arrays as the wrong type rather than complain. This file is that idea rebuilt against
+;;; the current representation, checked for exact agreement with the library's own
+;;; predictors, and measured. The sketch has been deleted; what it had measured is
+;;; recorded at the bottom of this file.
 ;;;
 ;;; Where the speed would come from
 ;;; -------------------------------
