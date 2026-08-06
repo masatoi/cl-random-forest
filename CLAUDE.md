@@ -202,11 +202,13 @@ training, pruning, feature importance and reconstruction all keep using the `nod
 
 Two things to know. A packed model is a snapshot: prune the forest and the packed copy goes
 on predicting with the old structure, silently. And `build-packed-topology` refuses a forest
-built with `:remove-sample-indices? t` whose leaves have lost their indices, because their
-class distributions would come out uniform rather than signalling (issue #14).
+that has been *pruned*: `pruning!`'s `delete-children!` turns an already-split node -- whose
+sample indices were nil'd when it was split -- back into a leaf without restoring them, so
+that leaf's class distribution would come out uniform rather than signalling (issue #14). A
+default-built, unpruned forest packs fine regardless of what `:remove-sample-indices?` was
+given at construction time; `t/packed.lisp` asserts this directly.
 
-The design and the measurements behind it are in `docs/packed-forest-layout.md` and
-`docs/superpowers/specs/2026-08-06-packed-forest-design.md`.
+The design and the measurements behind it are in `docs/packed-forest-layout.md`.
 
 ## Known broken code
 

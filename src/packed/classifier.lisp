@@ -129,7 +129,11 @@ CSR's offset loads and scattered writes cost more than the bytes saved."
               :element-type 'single-float :initial-element 0.0))
 
 (defun packed-predict (classifier datamatrix datum-index acc)
-  "PREDICT-FOREST's answer for one datum. Writes only ACC."
+  "PREDICT-FOREST's answer for one datum. Writes only ACC.
+
+ACC is normalised in place: on return it holds the class distribution (summed votes divided
+by N-TREE), not the raw sums. PACKED-VERIFY relies on this to read the distribution straight
+out of ACC. Contrast PACKED-PREDICT-BATCH, which leaves its accumulators unnormalised."
   (declare (optimize (speed 3) (safety 0))
            (type packed-classifier classifier)
            (type (simple-array single-float (* *)) datamatrix)
@@ -176,7 +180,17 @@ CSR's offset loads and scattered writes cost more than the bytes saved."
 
 Walking one tree over the whole tile before moving to the next touches each tree's arrays
 once per tile instead of once per datum. The cost is holding (END - START) x n-class
-accumulators, which is why a tile of one loses and a tile of a few hundred wins."
+accumulators, which is why a tile of one loses and a tile of a few hundred wins.
+
+ACCS must have at least (END - START) rows -- as MAKE-PACKED-ACCUMULATORS gives it when
+called with a TILE no smaller than (END - START) -- and OUT must have length at least
+(END - START); this runs at (safety 0), so either being too small is a silent out-of-bounds
+write, not a signalled error.
+
+Unlike PACKED-PREDICT, ACCS is left holding raw per-tree sums, not divided by N-TREE: the
+division by N-TREE happens only in a local while picking each row's argmax for OUT, and
+that quotient is never written back. A caller that wants ACCS's own rows to be class
+distributions must divide each one by N-TREE itself."
   (declare (optimize (speed 3) (safety 0))
            (type packed-classifier classifier)
            (type (simple-array single-float (* *)) datamatrix accs)

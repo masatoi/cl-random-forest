@@ -187,6 +187,13 @@ The following figure shows the accuracy for test dataset and the number of leaf 
 For serving a trained model, =cl-random-forest/src/packed= flattens a forest into arrays:
 5-8x faster than =predict-forest=, safe to call from several threads, and serialisable.
 
+A forest you intend to prune /and/ pack must be built with =:remove-sample-indices? nil=:
+pruning turns internal nodes back into leaves without restoring their sample indices (issue
+#14), and the packed builder refuses those. =*forest*= above was built with the default
+=:remove-sample-indices? t= and was then pruned in the Global Pruning section, so packing it
+as shown below will signal a =packed-build-error= unless it is rebuilt with
+=:remove-sample-indices? nil= first.
+
 #+BEGIN_SRC lisp
 (ql:quickload :cl-random-forest/src/packed)
 
