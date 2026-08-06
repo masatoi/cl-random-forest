@@ -900,6 +900,10 @@ Serial answers first, then the same rows through a kernel, then compare."
 
 ;;;; Three representations and parallel scaling, measured
 ;;;;
+;;;; (Taken with the earlier three-way benchmark, before PACKED-FOREST existed. The
+;;;; four-way table further down supersedes the throughput columns here, measuring all of
+;;;; them on one forest.)
+;;;;
 ;;;; 500-tree forests, one run each. Rates are predictions per second.
 ;;;;
 ;;;; | | nodes | compile s | build s | disagreements | walk | compiled | array |
@@ -1315,3 +1319,117 @@ LEAF-CLASSES with each leaf's argmax, which is what a single tree answers with."
 ;;;; earlier three-way table had walk 2336, array 8354, compiled 10638; packed reaches
 ;;;; 19047 on its own forest, past compiled -- though on a different forest build, so the
 ;;;; two need measuring side by side before that is claimed.
+
+;;;; All four on one forest
+;;;;
+;;;; Every comparison so far has been between two representations built from the same
+;;;; forest, but across pairs the forests differed -- MAKE-FOREST is unseeded, and the
+;;;; suggestion that packed had overtaken compiled rested on numbers from two different
+;;;; builds. This measures all four on one.
+
+(defun code-bytes (function)
+  "Machine code size of FUNCTION, or NIL if this implementation will not say.
+SBCL-specific and looked up by name so the file still reads elsewhere."
+  (let ((size-fn (find-symbol "%CODE-CODE-SIZE" "SB-KERNEL"))
+        (header-fn (find-symbol "FUN-CODE-HEADER" "SB-KERNEL")))
+    (when (and size-fn header-fn (fboundp size-fn) (fboundp header-fn))
+      (ignore-errors (funcall size-fn (funcall header-fn function))))))
+
+(defun compiled-forest-code-bytes (cf)
+  "Total machine code of a COMPILED-FOREST's predictors, or NIL."
+  (let ((total 0))
+    (dotimes (i (compiled-forest-n-tree cf) total)
+      (let ((bytes (code-bytes (svref (compiled-forest-predictors cf) i))))
+        (unless bytes (return-from compiled-forest-code-bytes nil))
+        (incf total bytes)))))
+
+(defun benchmark-four-ways (n-class datamatrix target datamatrix-test n-tree max-depth
+                            n-trial)
+  "One forest, four ways: walking, compiled, array, packed."
+  (let ((forest (make-forest n-class datamatrix target
+                             :n-tree n-tree :bagging-ratio 0.1
+                             :max-depth max-depth :n-trial n-trial :min-region-samples 5)))
+    (multiple-value-bind (compiled compile-seconds) (seconds (compile-forest forest))
+      (let* ((af (build-array-forest forest))
+             (pf (build-packed-forest forest))
+             (af-acc (make-accumulator af))
+             (pf-acc (make-packed-accumulator pf))
+             (code (compiled-forest-code-bytes compiled))
+             (walk (time-predictions (lambda (d i) (predict-forest forest d i))
+                                     datamatrix-test))
+             (comp (time-predictions (lambda (d i) (predict-compiled-forest compiled d i))
+                                     datamatrix-test))
+             (arr (time-predictions (lambda (d i) (predict-array-forest af d i af-acc))
+                                    datamatrix-test))
+             (pack (time-predictions (lambda (d i) (predict-packed-forest pf d i pf-acc))
+                                     datamatrix-test)))
+        (multiple-value-bind (af-nodes af-leaves) (array-forest-bytes af)
+          (declare (ignore af-nodes))
+          (multiple-value-bind (pf-nodes pf-leaves) (packed-forest-bytes pf)
+            (declare (ignore pf-leaves))
+            (format t "~&| ~Dx d=~D | ~D | ~D/~D/~D | ~,1F s | ~@[~,1F MB code~] | ~
+~,1F MB packed | ~,0F | ~,0F | ~,0F | ~,0F |~%"
+                    n-tree max-depth (packed-forest-n-internal pf)
+                    (count-forest-disagreements forest compiled datamatrix-test)
+                    (count-array-forest-disagreements forest af datamatrix-test)
+                    (count-packed-forest-disagreements forest pf datamatrix-test)
+                    compile-seconds
+                    (and code (/ code 1048576.0))
+                    (/ (+ pf-nodes af-leaves) 1048576.0)
+                    walk comp arr pack)
+            (force-output)))))))
+
+(defun run-four-ways (&key (dataset :letter) (configs '((500 5) (500 10))))
+  (multiple-value-bind (datamatrix datamatrix-test target n-class n-trial)
+      (dataset-parts dataset)
+    (format t "~&=== four representations, one forest each, on ~A ===~%" dataset)
+    (format t "~&| model | internal nodes | disagreements c/a/p | compile | code | packed bytes | walk | compiled | array | packed |~%")
+    (format t "|---|---|---|---|---|---|---|---|---|---|~%")
+    (force-output)
+    (dolist (config configs)
+      (benchmark-four-ways n-class datamatrix target datamatrix-test
+                           (first config) (second config) n-trial))
+    (format t "~&FOUR_WAYS_DONE~%")
+    (force-output)))
+
+;;;; All four on one forest, measured
+;;;;
+;;;; One forest per row, all four representations built from it. Disagreements are
+;;;; compiled / array / packed against PREDICT-FOREST, and zero everywhere.
+;;;;
+;;;; | | internal nodes | compile | code MB | packed MB | walk | compiled | array | packed |
+;;;; |---|---|---|---|---|---|---|---|---|
+;;;; | letter 500x d=5  |  14551 |  2.3 s |  0.8 |  1.7 | 7396 | 52173 | 40257 | 53860 |
+;;;; | letter 500x d=10 | 113547 | 16.1 s |  5.9 | 13.0 | 3274 | 13495 |  8696 | 16051 |
+;;;; | MNIST 500x d=5   |  15485 |  1.9 s |  0.8 |  0.8 | 2834 | 61255 | 56074 | 68259 |
+;;;; | MNIST 500x d=10  | 259401 | 47.9 s | 13.5 | 13.9 | 2278 | 10438 |  8217 | 19120 |
+;;;;
+;;;; Packed is fastest in all four, and the earlier suggestion that it had overtaken
+;;;; compiled -- which rested on two different forest builds -- holds up on one: 1.03x at
+;;;; letter depth 5, 1.19x at letter depth 10, 1.11x at MNIST depth 5, and 1.83x at MNIST
+;;;; depth 10. The margin grows with the model, which is the same pattern the array-versus-
+;;;; packed comparison showed and the opposite of what compiling does.
+;;;;
+;;;; So the prediction that started this -- that laying trees out as data would beat
+;;;; compiling them for large forests -- was right after all. It failed the first time
+;;;; because of how the data was laid out, not because the idea was wrong: giving leaves
+;;;; node slots and addressing them with 64-bit indices cost enough to lose 1.5x to
+;;;; compiled code, and removing both turns it into a 1.8x win.
+;;;;
+;;;; Memory, the thing left unmeasured until now. SBCL will report machine code size, so
+;;;; both sides can be counted. On MNIST's largest forest the compiled predictors are 13.5
+;;;; MB of code and the packed layout is 13.9 MB of arrays -- nearly identical, and in both
+;;;; cases most of it is unavoidable: 259401 internal nodes have to be described somehow.
+;;;; The packed total is 4.0 MB of nodes and 9.9 MB of leaf distributions, so two thirds of
+;;;; it is the class distributions rather than the tree structure, and a forest with fewer
+;;;; classes or a regression forest would be much smaller. letter, with 26 classes, spends
+;;;; 11.4 of its 13.0 MB the same way.
+;;;;
+;;;; What each is for, on this evidence:
+;;;;
+;;;;   packed    fastest everywhere, 0.05 s to build, and the only one worth using in a
+;;;;             loop that rebuilds the model -- iterated pruning rebuilds 16 to 19 times
+;;;;   compiled  no longer fastest at any size measured here, and costs 47.9 s to build
+;;;;   array     superseded by packed; kept only so the two can be compared
+;;;;   walking   what the library does today, 3 to 8 times slower than any of them, and
+;;;;             unsafe to call from more than one thread
