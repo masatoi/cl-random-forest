@@ -48,7 +48,9 @@
                 #:node-left-node
                 #:node-right-node
                 #:node-class-distribution
-                #:argmax))
+                #:argmax)
+  (:import-from #:cl-random-forest/src/utils
+                #:read-data))
 
 (in-package :cl-random-forest/src/experimental/compiled-trees)
 
@@ -245,10 +247,10 @@ Returns (values rate checksum passes)."
       (walk (dtree-root dtree)))
     n))
 
-(defun benchmark-dtree (n-class datamatrix target datamatrix-test max-depth)
+(defun benchmark-dtree (n-class datamatrix target datamatrix-test max-depth n-trial)
   "Build one tree at MAX-DEPTH, compile it, check agreement, and time both predictors."
   (let ((dtree (make-dtree n-class datamatrix target
-                           :max-depth max-depth :n-trial 10 :min-region-samples 5)))
+                           :max-depth max-depth :n-trial n-trial :min-region-samples 5)))
     (multiple-value-bind (compiled compile-seconds) (seconds (compile-dtree dtree))
       (let ((disagreements (count-dtree-disagreements dtree compiled datamatrix-test))
             (walk-rate (time-predictions (lambda (d i) (predict-dtree dtree d i))
@@ -259,11 +261,11 @@ Returns (values rate checksum passes)."
                 walk-rate compiled-rate (/ compiled-rate walk-rate))
         (force-output)))))
 
-(defun benchmark-forest (n-class datamatrix target datamatrix-test n-tree max-depth)
+(defun benchmark-forest (n-class datamatrix target datamatrix-test n-tree max-depth n-trial)
   "Build a forest, compile every tree, check agreement, and time both predictors."
   (let ((forest (make-forest n-class datamatrix target
                              :n-tree n-tree :bagging-ratio 0.1
-                             :max-depth max-depth :n-trial 10 :min-region-samples 5)))
+                             :max-depth max-depth :n-trial n-trial :min-region-samples 5)))
     (multiple-value-bind (compiled compile-seconds) (seconds (compile-forest forest))
       (let ((disagreements (count-forest-disagreements forest compiled datamatrix-test))
             (leaves (reduce #'+ (mapcar #'count-leaves (forest-dtree-list forest))))
@@ -277,24 +279,64 @@ Returns (values rate checksum passes)."
                 walk-rate compiled-rate (/ compiled-rate walk-rate))
         (force-output)))))
 
-(defun run-benchmark (&key (depths '(5 10 15)) (forest-configs '((100 5) (100 10) (500 5))))
-  "Compile trees and forests of several shapes on letter and report agreement and speed."
-  (multiple-value-bind (datamatrix target) (cl-random-forest-test/fixture:letter-train)
-    (multiple-value-bind (datamatrix-test target-test) (cl-random-forest-test/fixture:letter-test)
-      (declare (ignore target-test))
-      (let ((n-class cl-random-forest-test/fixture:+letter-n-class+))
-        (format t "~&letter: ~D train, ~D test, ~D classes~%"
-                (array-dimension datamatrix 0) (array-dimension datamatrix-test 0) n-class)
-        (format t "~&| model | leaves | compile s | disagreements | walk pred/s | compiled pred/s | speedup |~%")
-        (format t "|---|---|---|---|---|---|---|~%")
-        (force-output)
-        (dolist (depth depths)
-          (benchmark-dtree n-class datamatrix target datamatrix-test depth))
-        (dolist (config forest-configs)
-          (benchmark-forest n-class datamatrix target datamatrix-test
-                            (first config) (second config)))
-        (format t "~&BENCHMARK_DONE~%")
-        (force-output)))))
+(defvar *mnist-cache* nil)
+
+(defun mnist-data ()
+  "Return (values datamatrix datamatrix-test target target-test) for MNIST, read once.
+
+READ-DATA subtracts 1 from every LIBSVM label, which suits 1-based label files; MNIST's
+already start at 0, so they arrive as -1..8 and have to be shifted back. This is what
+example/classification/mnist.lisp does inline."
+  (unless *mnist-cache*
+    (let ((dir cl-random-forest-test/fixture:*dataset-dir*))
+      (multiple-value-bind (datamatrix target)
+          (read-data (merge-pathnames "mnist.scale" dir) 784)
+        (multiple-value-bind (datamatrix-test target-test)
+            (read-data (merge-pathnames "mnist.scale.t" dir) 784)
+          (dotimes (i (length target)) (incf (aref target i)))
+          (dotimes (i (length target-test)) (incf (aref target-test i)))
+          (setf *mnist-cache*
+                (list datamatrix datamatrix-test target target-test))))))
+  (values-list *mnist-cache*))
+
+(defun dataset-parts (dataset)
+  "Return (values datamatrix datamatrix-test target n-class n-trial).
+
+N-TRIAL follows what example/classification/ uses for each set -- 10 for letter, 28 for
+MNIST -- because it decides how hard each split is searched and so how the trees are
+shaped, which is the thing being compiled."
+  (ecase dataset
+    (:letter
+     (multiple-value-bind (datamatrix target) (cl-random-forest-test/fixture:letter-train)
+       (multiple-value-bind (datamatrix-test target-test)
+           (cl-random-forest-test/fixture:letter-test)
+         (declare (ignore target-test))
+         (values datamatrix datamatrix-test target
+                 cl-random-forest-test/fixture:+letter-n-class+ 10))))
+    (:mnist
+     (multiple-value-bind (datamatrix datamatrix-test target target-test) (mnist-data)
+       (declare (ignore target-test))
+       (values datamatrix datamatrix-test target 10 28)))))
+
+(defun run-benchmark (&key (dataset :letter)
+                           (depths '(5 10 15))
+                           (forest-configs '((100 5) (100 10) (500 5) (500 10))))
+  "Compile trees and forests of several shapes and report agreement and speed."
+  (multiple-value-bind (datamatrix datamatrix-test target n-class n-trial)
+      (dataset-parts dataset)
+    (format t "~&~A: ~D train, ~D test, ~D features, ~D classes, n-trial ~D~%"
+            dataset (array-dimension datamatrix 0) (array-dimension datamatrix-test 0)
+            (array-dimension datamatrix 1) n-class n-trial)
+    (format t "~&| model | leaves | compile s | disagreements | walk pred/s | compiled pred/s | speedup |~%")
+    (format t "|---|---|---|---|---|---|---|~%")
+    (force-output)
+    (dolist (depth depths)
+      (benchmark-dtree n-class datamatrix target datamatrix-test depth n-trial))
+    (dolist (config forest-configs)
+      (benchmark-forest n-class datamatrix target datamatrix-test
+                        (first config) (second config) n-trial))
+    (format t "~&BENCHMARK_DONE~%")
+    (force-output)))
 
 ;;;; Measured on letter (15000 train, 5000 test, 26 classes), x86-64 SBCL, one run each.
 ;;;; Rates are predictions per second over the test set, timed for at least half a second.
@@ -334,6 +376,40 @@ Returns (values rate checksum passes)."
 ;;;;
 ;;;; Not measured: memory. 115008 leaves of generated code is a lot of instructions, and
 ;;;; nothing here reports how much.
+
+;;;; Measured on MNIST (60000 train, 10000 test, 784 features, 10 classes, n-trial 28),
+;;;; same machine, one run each.
+;;;;
+;;;; | model | leaves | compile s | disagreements | walk pred/s | compiled pred/s | speedup |
+;;;; |---|---|---|---|---|---|---|
+;;;; | tree d=5        |     32 |  0.01 | 0 |   184160 | 193837286 | 1052.6x |
+;;;; | tree d=10       |    887 |  0.14 | 0 |   686264 |  41139506 |   59.9x |
+;;;; | tree d=15       |   4982 |  2.03 | 0 |   889318 |  33499464 |   37.7x |
+;;;; | forest 100x d=5 |   3197 |  0.40 | 0 |    18832 |    475242 |   25.2x |
+;;;; | forest 100x d=10|  52430 | 10.67 | 0 |    21209 |    144402 |    6.8x |
+;;;; | forest 500x d=5 |  15991 |  1.95 | 0 |     2825 |     63795 |   22.6x |
+;;;; | forest 500x d=10| 259736 | 47.55 | 0 |     2307 |     10672 |    4.6x |
+;;;;
+;;;; Agreement is again exact everywhere.
+;;;;
+;;;; The shape is letter's, amplified. The leaf-histogram effect that dominates the
+;;;; single-tree numbers is stronger here because MNIST has four times the training data:
+;;;; a depth-5 tree puts 60000 samples into 32 leaves, so PREDICT-DTREE recounts thousands
+;;;; of labels per call and manages only 184k predictions per second -- slower than
+;;;; letter's already-slow 670k, and a quarter of what the same code does on MNIST at
+;;;; depth 15. Compiling removes that work entirely, which is where 1052x comes from. It
+;;;; is a statement about how much the library recomputes at shallow depth, not about how
+;;;; fast compiled branches are.
+;;;;
+;;;; Forests separate more sharply than on letter. At depth 5 the gain is 22-25x against
+;;;; letter's 7.6x, for the same reason -- more samples per leaf to recount. At depth 10 it
+;;;; collapses to 4.6x: 259736 leaves of generated code, and the summing of 500
+;;;; ten-element distributions that compiling does not touch.
+;;;;
+;;;; Compile time tracks total leaves at about 180 microseconds per thousand leaves here,
+;;;; against letter's roughly 140 -- close enough that leaf count, not feature count or
+;;;; dataset size, is what predicts it. The 500-tree depth-10 forest costs 47.6 seconds to
+;;;; compile, which is the number to weigh against a use that gets 4.6x back.
 
 ;;;; What the original sketch had measured
 ;;;;
