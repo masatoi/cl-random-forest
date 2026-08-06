@@ -338,6 +338,140 @@ shaped, which is the thing being compiled."
     (format t "~&BENCHMARK_DONE~%")
     (force-output)))
 
+;;;; Why a forest gains less than a tree
+;;;;
+;;;; "A forest is the tree's work repeated N times, so N times a K-times-faster tree should
+;;;; be K times faster" is the obvious expectation, and the tables above do not meet it.
+;;;; Two things break the arithmetic, and they pull in the same direction.
+;;;;
+;;;; The first is that the standalone tree and the forest's trees are not the same trees.
+;;;; BENCHMARK-DTREE trains on the whole set; MAKE-FOREST at :bagging-ratio 0.1 gives each
+;;;; tree a tenth of it. PREDICT-DTREE's cost is dominated by recounting a leaf's histogram
+;;;; from its SAMPLE-INDICES, which scales with how many samples landed there -- so the
+;;;; standalone tree's *baseline* is inflated by roughly the bagging ratio, and the speedup
+;;;; measured against it is inflated with it.
+;;;;
+;;;; The second is that a compiled forest is not merely N compiled trees. It still sums
+;;;; N-TREE distributions of N-CLASS floats and takes an argmax, work no compiled tree
+;;;; does and compiling cannot remove. That is the Amdahl residue.
+;;;;
+;;;; DECOMPOSE-FOREST measures both instead of arguing about them.
+
+(defun time-traversals-only (compiled-forest datamatrix)
+  "Rate at which the compiled forest reaches every leaf without aggregating anything.
+
+Calls each tree's predictor and sums the leaf ordinals. The gap between this and
+PREDICT-COMPILED-FOREST is what the distribution summing costs."
+  (let ((predictors (compiled-forest-predictors compiled-forest))
+        (n-tree (compiled-forest-n-tree compiled-forest)))
+    (time-predictions
+     (lambda (d i)
+       (let ((sum 0))
+         (declare (type fixnum sum))
+         (dotimes (tree n-tree sum)
+           (incf sum (the fixnum (funcall (the function (svref predictors tree)) d i))))))
+     datamatrix)))
+
+(defun decompose-forest (n-class datamatrix target datamatrix-test n-tree max-depth n-trial)
+  "Break a forest's speedup into per-tree cost and aggregation cost.
+
+Reports one of the forest's own trees measured alone -- same bagging, same depth -- so the
+per-tree speedup can be read without the standalone tree's inflated baseline, and then how
+much of the compiled forest's time is spent anywhere other than in those trees."
+  (let* ((forest (make-forest n-class datamatrix target
+                              :n-tree n-tree :bagging-ratio 0.1
+                              :max-depth max-depth :n-trial n-trial :min-region-samples 5))
+         (compiled (compile-forest forest))
+         (dtree (first (forest-dtree-list forest)))
+         (compiled-tree (compile-dtree dtree))
+         (tree-walk-rate (time-predictions (lambda (d i) (predict-dtree dtree d i))
+                                           datamatrix-test))
+         (tree-compiled-rate (time-predictions compiled-tree datamatrix-test))
+         (forest-walk-rate (time-predictions (lambda (d i) (predict-forest forest d i))
+                                             datamatrix-test))
+         (forest-compiled-rate (time-predictions
+                                (lambda (d i) (predict-compiled-forest compiled d i))
+                                datamatrix-test))
+         (traversal-rate (time-traversals-only compiled datamatrix-test))
+         ;; Seconds per prediction, so the parts can be added up.
+         (tree-compiled-us (/ 1d6 tree-compiled-rate))
+         (forest-compiled-us (/ 1d6 forest-compiled-rate))
+         (traversal-us (/ 1d6 traversal-rate)))
+    (format t "~&~%--- forest ~Dx d=~D, one of its trees measured alone ---~%" n-tree max-depth)
+    (format t "~&per-tree   walk ~,0F/s  compiled ~,0F/s  speedup ~,1Fx~%"
+            tree-walk-rate tree-compiled-rate (/ tree-compiled-rate tree-walk-rate))
+    (format t "~&forest     walk ~,0F/s  compiled ~,0F/s  speedup ~,1Fx~%"
+            forest-walk-rate forest-compiled-rate (/ forest-compiled-rate forest-walk-rate))
+    (format t "~&compiled forest budget per prediction: ~,1F us total~%" forest-compiled-us)
+    (format t "~&  ~,1F us  traversals only (~,0F%)~%"
+            traversal-us (* 100 (/ traversal-us forest-compiled-us)))
+    (format t "~&  ~,1F us  aggregation: ~D x ~D adds, divide, argmax (~,0F%)~%"
+            (- forest-compiled-us traversal-us) n-tree n-class
+            (* 100 (/ (- forest-compiled-us traversal-us) forest-compiled-us)))
+    (format t "~&  ~,1F us  one compiled tree x ~D, for reference~%"
+            (* tree-compiled-us n-tree) n-tree)
+    (force-output)))
+
+(defun run-decomposition (&key (dataset :letter) (configs '((500 5) (500 10))))
+  "Run DECOMPOSE-FOREST over several forest shapes."
+  (multiple-value-bind (datamatrix datamatrix-test target n-class n-trial)
+      (dataset-parts dataset)
+    (format t "~&=== decomposition on ~A ===~%" dataset)
+    (force-output)
+    (dolist (config configs)
+      (decompose-forest n-class datamatrix target datamatrix-test
+                        (first config) (second config) n-trial))
+    (format t "~&DECOMPOSITION_DONE~%")
+    (force-output)))
+
+;;;; Decomposition, measured
+;;;;
+;;;; RUN-DECOMPOSITION, 500-tree forests, one run each. "per-tree" is one of the forest's
+;;;; own trees timed alone -- same bagging, same depth -- so it can be compared with the
+;;;; standalone tree without the difference in training data.
+;;;;
+;;;; | | per-tree walk | per-tree speedup | forest speedup |
+;;;; |---|---|---|---|
+;;;; | letter d=5  |  5719943/s | 52.6x | 6.4x |
+;;;; | letter d=10 | 10559873/s | 19.9x | 3.9x |
+;;;; | MNIST d=5   |  1752967/s | 90.9x | 20.0x |
+;;;; | MNIST d=10  |  5659921/s | 22.3x | 4.3x |
+;;;;
+;;;; Compiled forest time per prediction, split into the traversals and everything else:
+;;;;
+;;;; | | total | traversals | aggregation | 500 x one tree, alone |
+;;;; |---|---|---|---|---|
+;;;; | letter d=5  | 18.3 us | 11.2 us (61%) |  7.1 us (39%) | 1.7 us |
+;;;; | letter d=10 | 58.4 us | 39.9 us (68%) | 18.5 us (32%) | 2.4 us |
+;;;; | MNIST d=5   | 15.6 us | 13.4 us (86%) |  2.1 us (14%) | 3.1 us |
+;;;; | MNIST d=10  | 80.1 us | 52.3 us (65%) | 27.8 us (35%) | 4.0 us |
+;;;;
+;;;; Three things, not two.
+;;;;
+;;;; 1. The standalone tree's baseline is inflated by bagging. On MNIST a forest tree walks
+;;;;    at 1.75M predictions per second against the standalone tree's 184k -- 9.5x, which
+;;;;    is :bagging-ratio 0.1 showing up exactly where the histogram recount predicts it.
+;;;;    Measured per-tree rather than against that inflated baseline, the speedup is 90.9x,
+;;;;    not 1052x. Most of the headline single-tree number is this.
+;;;;
+;;;; 2. Five hundred distinct compiled functions are far slower than one compiled function
+;;;;    called five hundred times. This is the effect not anticipated above, and it is the
+;;;;    larger one: on MNIST at depth 5 the traversals cost 13.4 us where 500 times a
+;;;;    single tree's own measured time is 3.1 us, a 4.3x penalty; at depth 10 it is 52.3
+;;;;    against 4.0, 13x. A tree timed alone runs with its code hot in the instruction
+;;;;    cache; in a forest each of 500 code blobs is touched once per prediction, and the
+;;;;    penalty grows with total code size -- 15991 leaves at depth 5 against 259736 at
+;;;;    depth 10. The walking forest does not pay this, because it is one small FIND-LEAF
+;;;;    loop over different data rather than 500 different pieces of code.
+;;;;
+;;;; 3. Aggregation, which compiling cannot touch: 14-39% of the compiled forest's time,
+;;;;    and worse where there are more classes to sum (letter's 26 against MNIST's 10).
+;;;;
+;;;; So the expectation that a forest inherits the tree's speedup fails on all three
+;;;; counts, and the one that would be worth attacking is the second. Emitting all trees
+;;;; into one function, or laying the thresholds out as data walked by one compact
+;;;; interpreter loop, would trade branch-prediction for locality. Not measured here.
+
 ;;;; Measured on letter (15000 train, 5000 test, 26 classes), x86-64 SBCL, one run each.
 ;;;; Rates are predictions per second over the test set, timed for at least half a second.
 ;;;;
