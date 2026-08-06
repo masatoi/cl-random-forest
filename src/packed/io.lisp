@@ -118,14 +118,106 @@
 (defun u32-of-s32 (x) (ldb (byte 32 0) x))
 (defun s32-of-u32 (x) (if (logbitp 31 x) (- x (ash 1 32)) x))
 
+;;;; Loaded-array validation
+;;;;
+;;;; BUILD-PACKED-TOPOLOGY validates exhaustively before anything reaches its (safety 0)
+;;;; traversal. PACKED-LOAD reconstructs the same arrays from bytes it does not control, so
+;;;; it owes them the same discipline: every index that PACKED-LEAF or the CSR loop in
+;;;; PACKED-PREDICT will follow at (safety 0) is checked here first, where a bad one is an
+;;;; ordinary error instead of an out-of-bounds read or write. Thresholds and the leaf
+;;;; payload are not checked -- any bit pattern is a legal float, and NaN is not this
+;;;; layer's problem.
+
+(defun check-header-count (name value &key positive)
+  "Signal PACKED-LOAD-ERROR unless VALUE is a valid header count: non-negative always, and
+positive too when POSITIVE is true. READ-U32 cannot actually hand back a negative value, but
+the check is stated explicitly rather than left as an accident of the encoding."
+  (unless (<= 0 value)
+    (error 'packed-load-error :detail (format nil "header ~A is negative: ~D" name value)))
+  (when (and positive (not (plusp value)))
+    (error 'packed-load-error
+           :detail (format nil "header ~A must be positive, got ~D" name value))))
+
+(defun check-child-reference (array-name index value n-internal n-leaf)
+  "Signal PACKED-LOAD-ERROR unless VALUE is a valid child reference at ARRAY-NAME[INDEX]:
+either an internal-node index in [0, N-INTERNAL), or the BUILD-PACKED-TOPOLOGY encoding of a
+leaf, `~L` for some leaf L in [0, N-LEAF)."
+  (if (minusp value)
+      (let ((leaf (lognot value)))
+        (unless (< -1 leaf n-leaf)
+          (error 'packed-load-error
+                 :detail (format nil "~A[~D] = ~D references leaf ~D, outside [0,~D)"
+                                 array-name index value leaf n-leaf))))
+      (unless (< value n-internal)
+        (error 'packed-load-error
+               :detail (format nil "~A[~D] = ~D, outside the internal-node range [0,~D)"
+                               array-name index value n-internal)))))
+
+(defun validate-topology-arrays (n-internal n-leaf n-tree left right roots tree-leaf-offsets)
+  "Signal PACKED-LOAD-ERROR if LEFT, RIGHT, ROOTS or TREE-LEAF-OFFSETS are not internally
+consistent with the header counts N-INTERNAL, N-LEAF and N-TREE."
+  (dotimes (i n-internal)
+    (check-child-reference "left" i (aref left i) n-internal n-leaf)
+    (check-child-reference "right" i (aref right i) n-internal n-leaf))
+  (dotimes (tree n-tree)
+    (check-child-reference "roots" tree (aref roots tree) n-internal n-leaf))
+  (unless (zerop (aref tree-leaf-offsets 0))
+    (error 'packed-load-error
+           :detail (format nil "tree-leaf-offsets[0] = ~D, must start at 0"
+                           (aref tree-leaf-offsets 0))))
+  (let ((previous 0))
+    (dotimes (tree n-tree)
+      (let ((offset (aref tree-leaf-offsets tree)))
+        (when (< offset previous)
+          (error 'packed-load-error
+                 :detail (format nil "tree-leaf-offsets[~D] = ~D is less than the previous ~
+entry ~D" tree offset previous)))
+        (unless (or (< offset n-leaf) (and (zerop n-leaf) (zerop offset)))
+          (error 'packed-load-error
+                 :detail (format nil "tree-leaf-offsets[~D] = ~D, outside [0,~D)"
+                                 tree offset n-leaf)))
+        (setf previous offset)))))
+
+(defun validate-csr-arrays (n-leaf n-class offsets class probability)
+  "Signal PACKED-LOAD-ERROR unless OFFSETS, CLASS and PROBABILITY are a valid CSR partition
+of N-LEAF rows over N-CLASS columns."
+  (unless (zerop (aref offsets 0))
+    (error 'packed-load-error
+           :detail (format nil "csr offsets[0] = ~D, must start at 0" (aref offsets 0))))
+  (let ((previous (aref offsets 0)))
+    (loop for i from 1 to n-leaf
+          do (let ((offset (aref offsets i)))
+               (when (< offset previous)
+                 (error 'packed-load-error
+                        :detail (format nil "csr offsets[~D] = ~D is less than the previous ~
+entry ~D" i offset previous)))
+               (setf previous offset))))
+  (let ((nnz (aref offsets n-leaf)))
+    (unless (= nnz (length class))
+      (error 'packed-load-error
+             :detail (format nil "csr offsets[~D] = ~D but class has ~D entries"
+                             n-leaf nnz (length class))))
+    (unless (= nnz (length probability))
+      (error 'packed-load-error
+             :detail (format nil "csr offsets[~D] = ~D but probability has ~D entries"
+                             n-leaf nnz (length probability)))))
+  (dotimes (i (length class))
+    (unless (< (aref class i) n-class)
+      (error 'packed-load-error
+             :detail (format nil "csr class[~D] = ~D, outside [0,~D)"
+                             i (aref class i) n-class)))))
+
 ;;;; Save and load
 
 (defun packed-save (classifier pathname)
   "Write CLASSIFIER to PATHNAME. Returns PATHNAME.
 
-The format is a header followed by the arrays as little-endian words. Byte order is *not*
-converted on load -- the writing machine's is recorded and a mismatch is refused, which is
-worth more than conversion code that could not be exercised here."
+The format is a header followed by the arrays as little-endian words: WRITE-U32 always
+serialises LSB-first and SINGLE-FLOAT-TO-BITS yields an endianness-independent IEEE-754 bit
+pattern, so the file is byte-order independent by construction and round-trips identically
+on any machine. +BYTE-ORDER-PROBE+ is not there to catch a real mismatch, then -- it is a
+second, distinctive magic number, cheap insurance that the header was not merely truncated
+or shifted past the point the first magic check looks at."
   (let* ((topology (packed-classifier-topology classifier))
          (n-leaf (packed-topology-n-leaf topology))
          (n-class (packed-classifier-n-class classifier))
@@ -162,7 +254,12 @@ worth more than conversion code that could not be exercised here."
     pathname))
 
 (defun packed-load (pathname)
-  "Read a packed classifier written by PACKED-SAVE."
+  "Read a packed classifier written by PACKED-SAVE.
+
+Every array is checked against the header counts before this returns: LEFT, RIGHT, ROOTS,
+TREE-LEAF-OFFSETS and, for a CSR file, OFFSETS and CLASS. A corrupt file the topology
+traversal or the CSR prediction loop would otherwise read or write out of bounds at
+(safety 0) instead signals PACKED-LOAD-ERROR here."
   (with-open-file (s pathname :direction :input :element-type '(unsigned-byte 8))
     (let ((magic (make-array (length *magic*) :element-type '(unsigned-byte 8))))
       (unless (and (= (read-sequence magic s) (length *magic*))
@@ -181,31 +278,39 @@ worth more than conversion code that could not be exercised here."
            (n-tree (read-u32 s))
            (n-internal (read-u32 s))
            (n-leaf (read-u32 s))
-           (n-class (read-u32 s))
-           (topology
-             (%make-packed-topology
-              :n-tree n-tree :n-internal n-internal :n-leaf n-leaf
-              :feature (read-array s n-internal 32 '(unsigned-byte 32) #'identity)
-              :threshold (read-array s n-internal 32 'single-float #'bits-to-single-float)
-              :left (read-array s n-internal 32 '(signed-byte 32) #'s32-of-u32)
-              :right (read-array s n-internal 32 '(signed-byte 32) #'s32-of-u32)
-              :roots (read-array s n-tree 32 '(signed-byte 32) #'s32-of-u32)
-              :tree-leaf-offsets (read-array s n-tree 32 '(unsigned-byte 32)
-                                             #'identity))))
-      (if csr
-          (let* ((offsets (read-array s (1+ n-leaf) 32 '(unsigned-byte 32) #'identity))
-                 (nnz (aref offsets n-leaf)))
-            (%make-packed-classifier
-             :topology topology :n-class n-class :kind :csr
-             :offsets offsets
-             :class (read-array s nnz 16 '(unsigned-byte 16) #'identity)
-             :probability (read-array s nnz 32 'single-float #'bits-to-single-float)))
-          (let ((flat (read-array s (* (max n-leaf 1) n-class) 32 'single-float
-                                  #'bits-to-single-float))
-                (table (make-array (list (max n-leaf 1) n-class)
-                                   :element-type 'single-float)))
-            (dotimes (row (max n-leaf 1))
-              (dotimes (k n-class)
-                (setf (aref table row k) (aref flat (+ (* row n-class) k)))))
-            (%make-packed-classifier
-             :topology topology :n-class n-class :kind :dense :table table))))))
+           (n-class (read-u32 s)))
+      (check-header-count "n-tree" n-tree :positive t)
+      (check-header-count "n-internal" n-internal)
+      (check-header-count "n-leaf" n-leaf)
+      (check-header-count "n-class" n-class :positive t)
+      (let* ((feature (read-array s n-internal 32 '(unsigned-byte 32) #'identity))
+             (threshold (read-array s n-internal 32 'single-float #'bits-to-single-float))
+             (left (read-array s n-internal 32 '(signed-byte 32) #'s32-of-u32))
+             (right (read-array s n-internal 32 '(signed-byte 32) #'s32-of-u32))
+             (roots (read-array s n-tree 32 '(signed-byte 32) #'s32-of-u32))
+             (tree-leaf-offsets (read-array s n-tree 32 '(unsigned-byte 32) #'identity)))
+        (validate-topology-arrays n-internal n-leaf n-tree left right roots
+                                  tree-leaf-offsets)
+        (let ((topology
+                (%make-packed-topology
+                 :n-tree n-tree :n-internal n-internal :n-leaf n-leaf
+                 :feature feature :threshold threshold :left left :right right
+                 :roots roots :tree-leaf-offsets tree-leaf-offsets)))
+          (if csr
+              (let* ((offsets (read-array s (1+ n-leaf) 32 '(unsigned-byte 32) #'identity))
+                     (nnz (aref offsets n-leaf))
+                     (class (read-array s nnz 16 '(unsigned-byte 16) #'identity))
+                     (probability (read-array s nnz 32 'single-float #'bits-to-single-float)))
+                (validate-csr-arrays n-leaf n-class offsets class probability)
+                (%make-packed-classifier
+                 :topology topology :n-class n-class :kind :csr
+                 :offsets offsets :class class :probability probability))
+              (let ((flat (read-array s (* (max n-leaf 1) n-class) 32 'single-float
+                                      #'bits-to-single-float))
+                    (table (make-array (list (max n-leaf 1) n-class)
+                                       :element-type 'single-float)))
+                (dotimes (row (max n-leaf 1))
+                  (dotimes (k n-class)
+                    (setf (aref table row k) (aref flat (+ (* row n-class) k)))))
+                (%make-packed-classifier
+                 :topology topology :n-class n-class :kind :dense :table table))))))))

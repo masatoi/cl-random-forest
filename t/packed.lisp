@@ -249,15 +249,62 @@
             "a byte-order mismatch is rejected"))
       (uiop:with-temporary-file (:pathname path :type "packed")
         (packed-save (build-packed-classifier forest) path)
-        ;; Truncate.
-        (let ((bytes (with-open-file (s path :element-type '(unsigned-byte 8))
-                       (file-length s))))
+        ;; Truncate to half length, keeping the surviving bytes intact. Overwriting with
+        ;; zeros instead (as an earlier version of this test did) zeros the magic along
+        ;; with everything else, so PACKED-LOAD would reject the file on the magic check
+        ;; the first case above already covers, and the short-read paths this case exists
+        ;; to exercise would never run.
+        (let* ((bytes (with-open-file (s path :element-type '(unsigned-byte 8))
+                        (file-length s)))
+               (buffer (make-array bytes :element-type '(unsigned-byte 8))))
+          (with-open-file (s path :element-type '(unsigned-byte 8))
+            (read-sequence buffer s))
           (with-open-file (s path :direction :output :if-exists :supersede
                                   :element-type '(unsigned-byte 8))
-            (dotimes (i (floor bytes 2)) (write-byte 0 s))))
+            (write-sequence (subseq buffer 0 (floor bytes 2)) s)))
         (ok (handler-case (progn (packed-load path) nil)
               (packed-load-error () t))
-            "a truncated file is rejected")))))
+            "a truncated file is rejected"))
+      (uiop:with-temporary-file (:pathname path :type "packed")
+        ;; Corrupt N-CLASS, the last of the header's seven u32 fields, at byte offset
+        ;; 8 + 4*6 = 32. Decrementing it below the real class count is exactly what the
+        ;; reviewer demonstrated slipping through unchecked: the header positivity check
+        ;; still passes, and the topology is untouched, but a CSR file's CLASS array now
+        ;; holds ids that no longer fit under the corrupted count, which
+        ;; VALIDATE-CSR-ARRAYS must catch. Forcing :CSR here (rather than the :AUTO the
+        ;; other cases use) is what puts a CLASS array in the file for the corruption to
+        ;; land in -- the fixture's 4-class forest packs dense under :AUTO.
+        (packed-save (build-packed-classifier forest :payload :csr) path)
+        (with-open-file (s path :direction :io :if-exists :overwrite
+                                :element-type '(unsigned-byte 8))
+          (file-position s 32)
+          (write-byte 2 s))
+        (ok (handler-case (progn (packed-load path) nil)
+              (packed-load-error () t))
+            "a corrupted n-class is rejected"))
+      (uiop:with-temporary-file (:pathname path :type "packed")
+        (packed-save (build-packed-classifier forest) path)
+        ;; Corrupt one entry of LEFT. The topology arrays begin right after the header, at
+        ;; byte offset 8 + 4*7 = 36, and FEATURE comes first, so LEFT starts at
+        ;; 36 + 4*n-internal*2. N-INTERNAL is read back from the header (offset 24) rather
+        ;; than hardcoded, since the exact node count is an artifact of training the
+        ;; fixture forest, not something this test pins.
+        (let* ((n-internal (with-open-file (s path :element-type '(unsigned-byte 8))
+                             (file-position s 24)
+                             (+ (read-byte s)
+                                (ash (read-byte s) 8)
+                                (ash (read-byte s) 16)
+                                (ash (read-byte s) 24))))
+               (left-start (+ 36 (* 4 n-internal 2))))
+          (with-open-file (s path :direction :io :if-exists :overwrite
+                                  :element-type '(unsigned-byte 8))
+            (file-position s left-start)
+            ;; A positive value far larger than any real internal-node count, written
+            ;; little-endian.
+            (write-byte #xff s) (write-byte #xff s) (write-byte #xff s) (write-byte #x7f s)))
+        (ok (handler-case (progn (packed-load path) nil)
+              (packed-load-error () t))
+            "a corrupted left entry is rejected")))))
 
 (deftest packed-float-bits-round-trip
   ;; The fast paths exist per implementation; the portable fallback is the reference. They
