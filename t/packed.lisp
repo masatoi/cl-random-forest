@@ -191,3 +191,83 @@
                            (setf i end)))))
             (ok (zerop bad)
                 (format nil "~A: ~D batch answers differ from per-datum" payload bad))))))))
+
+(deftest packed-round-trips-through-a-file
+  (with-serial-kernel
+    (multiple-value-bind (datamatrix target) (synthetic-classification-test)
+      (declare (ignore target))
+      (let ((forest (synthetic-forest)))
+        (dolist (payload '(:dense :csr))
+          (uiop:with-temporary-file (:pathname path :type "packed")
+            (let* ((original (build-packed-classifier forest :payload payload))
+                   (acc (make-packed-accumulator original)))
+              (packed-save original path)
+              (let* ((restored (packed-load path))
+                     (restored-acc (make-packed-accumulator restored))
+                     (bad 0))
+                (ok (eq (packed-classifier-kind restored) payload)
+                    (format nil "~A survives the round trip" payload))
+                (dotimes (i (array-dimension datamatrix 0))
+                  (unless (= (packed-predict original datamatrix i acc)
+                             (packed-predict restored datamatrix i restored-acc))
+                    (incf bad)))
+                (ok (zerop bad)
+                    (format nil "~A: ~D predictions differ after reload" payload bad))))))))))
+
+(deftest packed-load-rejects-a-file-it-cannot-trust
+  (with-serial-kernel
+    (let ((forest (synthetic-forest)))
+      (uiop:with-temporary-file (:pathname path :type "packed")
+        (packed-save (build-packed-classifier forest) path)
+        ;; Corrupt the magic.
+        (with-open-file (s path :direction :io :if-exists :overwrite
+                                :element-type '(unsigned-byte 8))
+          (file-position s 0)
+          (write-byte 0 s))
+        (ok (handler-case (progn (packed-load path) nil)
+              (packed-load-error () t))
+            "a bad magic number is rejected"))
+      (uiop:with-temporary-file (:pathname path :type "packed")
+        (packed-save (build-packed-classifier forest) path)
+        ;; Corrupt the version, which lives at byte offset 8.
+        (with-open-file (s path :direction :io :if-exists :overwrite
+                                :element-type '(unsigned-byte 8))
+          (file-position s 8)
+          (write-byte 99 s))
+        (ok (handler-case (progn (packed-load path) nil)
+              (packed-load-error () t))
+            "an unknown version is rejected"))
+      (uiop:with-temporary-file (:pathname path :type "packed")
+        (packed-save (build-packed-classifier forest) path)
+        ;; Corrupt the byte-order probe, at offset 12.
+        (with-open-file (s path :direction :io :if-exists :overwrite
+                                :element-type '(unsigned-byte 8))
+          (file-position s 12)
+          (write-byte 99 s))
+        (ok (handler-case (progn (packed-load path) nil)
+              (packed-load-error () t))
+            "a byte-order mismatch is rejected"))
+      (uiop:with-temporary-file (:pathname path :type "packed")
+        (packed-save (build-packed-classifier forest) path)
+        ;; Truncate.
+        (let ((bytes (with-open-file (s path :element-type '(unsigned-byte 8))
+                       (file-length s))))
+          (with-open-file (s path :direction :output :if-exists :supersede
+                                  :element-type '(unsigned-byte 8))
+            (dotimes (i (floor bytes 2)) (write-byte 0 s))))
+        (ok (handler-case (progn (packed-load path) nil)
+              (packed-load-error () t))
+            "a truncated file is rejected")))))
+
+(deftest packed-float-bits-round-trip
+  ;; The fast paths exist per implementation; the portable fallback is the reference. They
+  ;; must agree, or a model saved on one implementation would not load on another.
+  (let ((values (list 0.0 1.0 -1.0 0.5 -0.5 3.14159 1.0e-8 1.0e8
+                      most-positive-single-float least-positive-normalized-single-float)))
+    (dolist (v values)
+      (ok (= v (cl-random-forest/src/packed::bits-to-single-float
+                (cl-random-forest/src/packed::single-float-to-bits v)))
+          (format nil "~S survives the bit round trip" v))
+      (ok (= (cl-random-forest/src/packed::single-float-to-bits v)
+             (cl-random-forest/src/packed::%portable-single-float-to-bits v))
+          (format nil "~S: fast path agrees with the portable one" v)))))
