@@ -332,3 +332,24 @@ Returns (values rate checksum passes)."
 ;;;;
 ;;;; Not measured: memory. 115008 leaves of generated code is a lot of instructions, and
 ;;;; nothing here reports how much.
+
+;;;; What the original sketch had measured
+;;;;
+;;;; src/experimental/workspace.lisp did carry timings, on MNIST with 500 trees at
+;;;; max-depth 5 and n-trial 28, before it was deleted in favour of this file:
+;;;;
+;;;;   compiled predictors  0.286 s over the 10000-row test set, 9385 correct
+;;;;   TEST-FOREST          2.659 s over the same set,           9433 correct (94.33%)
+;;;;
+;;;; About 9x, in the same range as the 7.6x measured here for a 500-tree depth-5 forest.
+;;;;
+;;;; The accuracy column is the part worth keeping. Those two numbers are not the same
+;;;; classifier: the sketch's PREDICT-DTREE-PREDICTOR-LIST counted one vote per tree and
+;;;; took the argmax of the votes, where PREDICT-FOREST sums the trees' normalised class
+;;;; distributions. 48 of 10000 predictions differ because of it, and nothing in the file
+;;;; remarked on the gap. That is exactly the substitution the header of this file warns
+;;;; about, and why COUNT-FOREST-DISAGREEMENTS exists and has to read zero.
+;;;;
+;;;; (The sketch also sized its vote counter by (array-dimension datamatrix 1) -- the
+;;;; feature count, 784 -- rather than the class count, which is harmless only because 784
+;;;; happens to exceed 10.)
