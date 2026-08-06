@@ -55,7 +55,7 @@ Tests are split into feature systems, each of which can be run on its own:
 | `cl-random-forest-test/dataset` | dataset download and conversion (3) |
 | `cl-random-forest-test/decision-tree` | decision tree accuracy (2) |
 | `cl-random-forest-test/forest` | random forest accuracy (2) |
-| `cl-random-forest-test/refinement` | global refinement accuracy and learner-type plumbing (6) |
+| `cl-random-forest-test/refinement` | global refinement accuracy, learner-type plumbing and convergence detection (9) |
 | `cl-random-forest-test/parallel` | parallelized training accuracy (4, SBCL only) |
 | `cl-random-forest-test/regression` | univariate regression behaviour (5) |
 | `cl-random-forest-test/pruning` | global pruning behaviour (5) |
@@ -74,17 +74,27 @@ There is no lint step. CI (`.github/workflows/ci.yml`) runs the matrix
 {sbcl-bin, ccl-bin} × {ubuntu-latest, macOS-latest}.
 
 Test/example caveats:
-- `cl-random-forest-test/regression`, `.../pruning`, and the four `refine-learner-*` tests in
-  `.../refinement` use `cl-random-forest-test/fixture`'s deterministic synthetic data and need
-  no network. Everything else downloads datasets.
-- Seven of those tests are **property assertions**, not pinned accuracy numbers, and three
-  deliberately pin bugs that are still open: `regression-refine-learner-default-gamma-diverges`
+- `cl-random-forest-test/regression`, `.../pruning`, and the seven synthetic tests in
+  `.../refinement` (`refine-learner-default-path-unchanged`, three `refine-learner-of-type-*`
+  and three `refine-learner-process-*`) need no network: they use
+  `cl-random-forest-test/fixture`'s deterministic synthetic data, or build their own.
+  Everything else downloads datasets.
+- Of the regression and pruning suites' ten tests, seven are **property assertions**, not
+  pinned accuracy numbers, and three deliberately pin bugs that are still open: `regression-refine-learner-default-gamma-diverges`
   (issue #16), `pruning-strands-leaves-without-sample-indices` (issue #14) and
   `pruning-does-not-update-forest-n-leaf` (issue #15). Each says so in a comment. When one of
   them starts **failing**, the underlying bug has been fixed and the test should be replaced by
   a positive assertion rather than "repaired".
 - Datasets are loaded lazily and memoized in `cl-random-forest-test/fixture`, so any single
   test can be run on its own and will fetch only what it needs.
+- The three `refine-learner-process-*` tests synthesise a refine dataset directly rather than
+  building a forest, so they run in under a second. They also carry deliberate label noise:
+  on separable data the best and last epoch coincide and the contract they check is not
+  observable.
+- `train-refine-learner-process` needs a `cl-online-learning` with `clol:copy-learner`.
+  After updating that library, recompile this one (`asdf:load-system :cl-random-forest
+  :force t`): SBCL open-codes `defstruct` copiers, so a stale fasl keeps calling the old
+  shallow one and the bug reappears silently.
 - The tests **download datasets over the network** (`wget` on the `PATH`) into `dataset/` under
   the system directory (gitignored). Same for most `example/` files.
 - The five dataset-driven suites are accuracy assertions with a `±1.0` tolerance over averaged
