@@ -599,8 +599,24 @@ FEATURE, THRESHOLD, LEFT, RIGHT and LEAF-P are indexed by a global node number; 
 each tree's. LEFT does double duty: on an internal node it is the child to take when the
 test passes, and on a leaf it is the row of DISTRIBUTIONS holding that leaf's class
 distribution. Both branches of the walk therefore read the same array, and a leaf needs no
-array of its own."
-  n-class n-tree n-node feature threshold left right leaf-p roots distributions)
+array of its own.
+
+The slots carry their types. Without them the accessors return T and every caller has to
+re-declare what it reads or lose the optimisation -- which is exactly what happened: the
+ROOTS read in PREDICT-ARRAY-TREE was the one place a declaration was missing, and SBCL
+fell back to a runtime dispatch on the array's element type there."
+  (n-class 0 :type fixnum)
+  (n-tree 0 :type fixnum)
+  (n-node 0 :type fixnum)
+  (feature (make-array 0 :element-type 'fixnum) :type (simple-array fixnum (*)))
+  (threshold (make-array 0 :element-type 'single-float)
+             :type (simple-array single-float (*)))
+  (left (make-array 0 :element-type 'fixnum) :type (simple-array fixnum (*)))
+  (right (make-array 0 :element-type 'fixnum) :type (simple-array fixnum (*)))
+  (leaf-p (make-array 0 :element-type 'bit) :type simple-bit-vector)
+  (roots (make-array 0 :element-type 'fixnum) :type (simple-array fixnum (*)))
+  (distributions (make-array '(0 0) :element-type 'single-float)
+                 :type (simple-array single-float (* *))))
 
 (defun build-array-forest (forest &key (leaf-payload :distribution))
   "Flatten FOREST into arrays.
@@ -944,3 +960,32 @@ Serial answers first, then the same rows through a kernel, then compare."
 ;;;; signal, it does not slow down, it returns confident wrong answers. Prediction
 ;;;; parallelism is not something these representations take away -- it is something the
 ;;;; library does not have, and either of them is what makes it possible.
+
+;;;; Are the declarations actually working?
+;;;;
+;;;; Worth checking rather than assuming, since (safety 0) means SBCL trusts a declaration
+;;;; without verifying it and a wrong one is silent. Compiling the file with notes visible
+;;;; found exactly two, both on one expression:
+;;;;
+;;;;   ; in: DEFUN PREDICT-ARRAY-TREE
+;;;;   ;     (AREF (ARRAY-FOREST-ROOTS ARRAY-FOREST) 0)
+;;;;   ; note: unable to avoid runtime dispatch on array element type
+;;;;   ; because: Upgraded element type of array is not known at compile time.
+;;;;
+;;;; PREDICT-ARRAY-FOREST -- the hot path, and the one all the forest numbers come from --
+;;;; was clean, so its declarations were doing their job. The single-tree walk was reading
+;;;; ROOTS without one, the only place a local declaration had been left out.
+;;;;
+;;;; The cause was that ARRAY-FOREST's slots had no :type, so every accessor returned T and
+;;;; each caller had to re-declare whatever it read. Typing the slots fixes it at the
+;;;; source: notes go to zero and no caller has to remember. Single-tree rates on letter
+;;;; afterwards, against 0 disagreements with PREDICT-DTREE:
+;;;;
+;;;;   d=5    57 nodes  102.0M predictions/s
+;;;;   d=10 1113 nodes   53.3M
+;;;;   d=15 2881 nodes   39.7M
+;;;;
+;;;; Against the fully compiled tree's 312M / 208M / 165M from the first table, so the
+;;;; array walk gives up 3-4x on a single tree -- the cost of loading feature, threshold
+;;;; and child per node instead of having them as immediates in straight-line code. It is
+;;;; still 20-150x the library's own PREDICT-DTREE.
