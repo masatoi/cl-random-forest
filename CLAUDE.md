@@ -55,7 +55,7 @@ Tests are split into feature systems, each of which can be run on its own:
 | `cl-random-forest-test/dataset` | dataset download and conversion (3) |
 | `cl-random-forest-test/decision-tree` | decision tree accuracy (2) |
 | `cl-random-forest-test/forest` | random forest accuracy (2) |
-| `cl-random-forest-test/refinement` | global refinement accuracy (2) |
+| `cl-random-forest-test/refinement` | global refinement accuracy (2) and convergence detection (3) |
 | `cl-random-forest-test/parallel` | parallelized training accuracy (4, SBCL only) |
 | `cl-random-forest-test/regression` | univariate regression behaviour (5) |
 | `cl-random-forest-test/pruning` | global pruning behaviour (5) |
@@ -84,6 +84,12 @@ Test/example caveats:
   a positive assertion rather than "repaired".
 - Datasets are loaded lazily and memoized in `cl-random-forest-test/fixture`, so any single
   test can be run on its own and will fetch only what it needs.
+- The three `refine-learner-process-*` tests synthesise a refine dataset directly instead of
+  building a forest, so they need no network and run in under a second.
+- `train-refine-learner-process` needs a `cl-online-learning` with `clol:copy-learner`.
+  After updating that library, recompile this one (`asdf:load-system :cl-random-forest
+  :force t`): SBCL open-codes `defstruct` copiers, so a stale fasl keeps calling the old
+  shallow one and the bug reappears silently.
 - The tests **download datasets over the network** (`wget` on the `PATH`) into `dataset/` under
   the system directory (gitignored). Same for most `example/` files.
 - The five dataset-driven suites are accuracy assertions with a `±1.0` tolerance over averaged

@@ -978,20 +978,30 @@ Wallace, Byron C., et al. ``Class imbalance, redux.''
 
 (defun train-refine-learner-process-inner
     (refine-learner train-dataset train-target test-dataset test-target &key (max-epoch 100))
-  (let ((tmp-learner nil)
-        (max-accuracy 0.0))
+  "Train REFINE-LEARNER until its accuracy on the test set stops improving.
+
+Returns (values best-learner best-accuracy): the learner as it stood at its best epoch,
+and that epoch's accuracy. REFINE-LEARNER itself is trained past that point and is left
+holding the last epoch, so use the returned learner, not the argument.
+
+Two things here used to disagree with that contract (issue #20). The snapshot was taken
+with CLOL::COPY-SPARSE-AROW / CLOL::COPY-ONE-VS-REST, which were defstruct's shallow
+copiers and shared the weight arrays with the learner that kept training, so it tracked
+its original instead of preserving anything. And it was taken *before* each epoch, which
+is the best epoch only when the loop exits early -- on running out of MAX-EPOCH it
+returned the second-to-last epoch beside the last epoch's accuracy. Snapshotting after an
+epoch that improved is right at both exits, and copies less often."
+  (let ((best-learner nil)
+        (max-accuracy -1.0))
     (loop repeat max-epoch do
-      (setf tmp-learner
-            (etypecase refine-learner
-              (cl-online-learning::sparse-arow (clol::copy-sparse-arow refine-learner))
-              (cl-online-learning::one-vs-rest (clol::copy-one-vs-rest refine-learner))))
       (train-refine-learner refine-learner train-dataset train-target)
       (let ((accuracy (test-refine-learner refine-learner test-dataset test-target :quiet-p t)))
         (format t "Accuracy: ~A~%" accuracy)
         (if (> accuracy max-accuracy)
-            (setf max-accuracy accuracy)
+            (setf max-accuracy accuracy
+                  best-learner (clol:copy-learner refine-learner))
             (return))))
-    (values tmp-learner max-accuracy)))
+    (values best-learner max-accuracy)))
 
 (defmacro train-refine-learner-process
     (refine-learner train-dataset train-target test-dataset test-target &key (max-epoch 100))
