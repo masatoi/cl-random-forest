@@ -989,3 +989,329 @@ Serial answers first, then the same rows through a kernel, then compare."
 ;;;; array walk gives up 3-4x on a single tree -- the cost of loading feature, threshold
 ;;;; and child per node instead of having them as immediates in straight-line code. It is
 ;;;; still 20-150x the library's own PREDICT-DTREE.
+
+;;;; LightGBM's packing
+;;;;
+;;;; ARRAY-FOREST above is Structure-of-Arrays, which is LightGBM's shape, but it makes two
+;;;; choices LightGBM does not.
+;;;;
+;;;; It gives every node a slot, leaves included, and marks them in a bit vector. LightGBM
+;;;; stores only internal nodes -- there are exactly n-leaf - 1 of them per tree -- and
+;;;; encodes a leaf as a *negative child index*, LEFT-CHILD holding ~leaf. The loop's
+;;;; continuation test then is the leaf test:
+;;;;
+;;;;   while (node >= 0) node = decision(...);
+;;;;   return leaf_value[~node];
+;;;;
+;;;; No bit vector, no extra read per node, and the node arrays halve because leaves no
+;;;; longer occupy slots in FEATURE, THRESHOLD and RIGHT that nothing ever reads.
+;;;;
+;;;; And it uses fixnum for every index, which is eight bytes to address a few hundred
+;;;; thousand nodes. (signed-byte 32) is enough for both the node and leaf numbering here
+;;;; and halves those arrays again.
+;;;;
+;;;; PACKED-FOREST is ARRAY-FOREST with both changes. Both are kept so they can be measured
+;;;; against each other in one process rather than across runs.
+
+(defstruct (packed-forest (:constructor %make-packed-forest))
+  "A forest as LightGBM lays one out: internal nodes only, leaves as negative indices.
+
+LEFT and RIGHT hold a non-negative internal-node index, or the bitwise complement of a leaf
+number. ROOTS may hold either, since a tree that never split is a bare leaf. FEATURE and
+THRESHOLD are indexed by internal-node number only, so they are half the length
+ARRAY-FOREST needs."
+  (n-class 0 :type fixnum)
+  (n-tree 0 :type fixnum)
+  (n-internal 0 :type fixnum)
+  (n-leaf 0 :type fixnum)
+  (feature (make-array 0 :element-type '(unsigned-byte 32))
+           :type (simple-array (unsigned-byte 32) (*)))
+  (threshold (make-array 0 :element-type 'single-float)
+             :type (simple-array single-float (*)))
+  (left (make-array 0 :element-type '(signed-byte 32))
+        :type (simple-array (signed-byte 32) (*)))
+  (right (make-array 0 :element-type '(signed-byte 32))
+         :type (simple-array (signed-byte 32) (*)))
+  (roots (make-array 0 :element-type '(signed-byte 32))
+         :type (simple-array (signed-byte 32) (*)))
+  (distributions (make-array '(0 0) :element-type 'single-float)
+                 :type (simple-array single-float (* *)))
+  (leaf-classes (make-array 0 :element-type '(unsigned-byte 32))
+                :type (simple-array (unsigned-byte 32) (*))))
+
+(defun build-packed-forest (forest &key (leaf-payload :distribution))
+  "Flatten FOREST the way LightGBM lays a model out.
+
+LEAF-PAYLOAD :distribution fills DISTRIBUTIONS, which is what a forest sums; :class fills
+LEAF-CLASSES with each leaf's argmax, which is what a single tree answers with."
+  (let ((feature (make-array 64 :element-type '(unsigned-byte 32)
+                                :adjustable t :fill-pointer 0))
+        (threshold (make-array 64 :element-type 'single-float
+                                  :adjustable t :fill-pointer 0))
+        (left (make-array 64 :element-type '(signed-byte 32) :adjustable t :fill-pointer 0))
+        (right (make-array 64 :element-type '(signed-byte 32) :adjustable t :fill-pointer 0))
+        (leaf-data '())
+        (n-leaf 0)
+        (roots '())
+        (n-class (forest-n-class forest)))
+    (labels ((emit (node)
+               "Return NODE's index: non-negative for an internal node, ~leaf for a leaf."
+               (cond
+                 ((node-test-attribute node)
+                  ;; Reserve before recursing, so a child's index exceeds its parent's.
+                  (let ((self (fill-pointer feature)))
+                    (vector-push-extend 0 feature)
+                    (vector-push-extend 0.0 threshold)
+                    (vector-push-extend 0 left)
+                    (vector-push-extend 0 right)
+                    (let ((l (emit (node-left-node node)))
+                          (r (emit (node-right-node node))))
+                      (setf (aref feature self) (node-test-attribute node)
+                            (aref threshold self) (node-test-threshold node)
+                            (aref left self) l
+                            (aref right self) r))
+                    self))
+                 (t
+                  (push (ecase leaf-payload
+                          (:distribution (leaf-distribution node))
+                          (:class (leaf-class node)))
+                        leaf-data)
+                  (prog1 (lognot n-leaf) (incf n-leaf))))))
+      (dolist (dtree (forest-dtree-list forest))
+        (push (emit (dtree-root dtree)) roots)))
+    (setf leaf-data (nreverse leaf-data))
+    (let ((table (make-array (list (if (eq leaf-payload :distribution) (max n-leaf 1) 0)
+                                   (if (eq leaf-payload :distribution) n-class 0))
+                             :element-type 'single-float :initial-element 0.0))
+          (classes (make-array (if (eq leaf-payload :class) n-leaf 0)
+                               :element-type '(unsigned-byte 32) :initial-element 0)))
+      (ecase leaf-payload
+        (:distribution
+         (loop for dist in leaf-data
+               for row from 0
+               do (dotimes (k n-class) (setf (aref table row k) (aref dist k)))))
+        (:class
+         (loop for class in leaf-data
+               for i from 0
+               do (setf (aref classes i) class))))
+      (%make-packed-forest
+       :n-class n-class
+       :n-tree (forest-n-tree forest)
+       :n-internal (fill-pointer feature)
+       :n-leaf n-leaf
+       :feature (coerce feature '(simple-array (unsigned-byte 32) (*)))
+       :threshold (coerce threshold '(simple-array single-float (*)))
+       :left (coerce left '(simple-array (signed-byte 32) (*)))
+       :right (coerce right '(simple-array (signed-byte 32) (*)))
+       :roots (coerce (nreverse roots) '(simple-array (signed-byte 32) (*)))
+       :distributions table
+       :leaf-classes classes))))
+
+(defun make-packed-accumulator (packed-forest)
+  "A fresh accumulator for PREDICT-PACKED-FOREST. One per thread."
+  (make-array (packed-forest-n-class packed-forest)
+              :element-type 'single-float :initial-element 0.0))
+
+(defun predict-packed-forest (packed-forest datamatrix datum-index acc)
+  "PREDICT-FOREST's answer from the packed layout. Writes only ACC."
+  (declare (optimize (speed 3) (safety 0))
+           (type packed-forest packed-forest)
+           (type (simple-array single-float (* *)) datamatrix)
+           (type (simple-array single-float (*)) acc)
+           (type fixnum datum-index))
+  (let ((feature (packed-forest-feature packed-forest))
+        (threshold (packed-forest-threshold packed-forest))
+        (left (packed-forest-left packed-forest))
+        (right (packed-forest-right packed-forest))
+        (roots (packed-forest-roots packed-forest))
+        (table (packed-forest-distributions packed-forest))
+        (n-class (packed-forest-n-class packed-forest))
+        (n-tree (packed-forest-n-tree packed-forest)))
+    (declare (type (simple-array (unsigned-byte 32) (*)) feature)
+             (type (simple-array single-float (*)) threshold)
+             (type (simple-array (signed-byte 32) (*)) left right roots)
+             (type (simple-array single-float (* *)) table)
+             (type fixnum n-class n-tree))
+    (dotimes (k n-class) (setf (aref acc k) 0.0))
+    (dotimes (tree n-tree)
+      (let ((node (aref roots tree)))
+        (declare (type (signed-byte 32) node))
+        ;; The loop's own test is the leaf test: no bit vector, no extra read.
+        (loop while (>= node 0)
+              do (setf node (if (>= (aref datamatrix datum-index (aref feature node))
+                                    (aref threshold node))
+                                (aref left node)
+                                (aref right node))))
+        (let ((row (lognot node)))
+          (declare (type fixnum row))
+          (dotimes (k n-class)
+            (incf (aref acc k) (aref table row k))))))
+    (dotimes (k n-class)
+      (setf (aref acc k) (/ (aref acc k) n-tree)))
+    (argmax acc)))
+
+(defun predict-packed-tree (packed-forest datamatrix datum-index)
+  "The class a :class-payload single-tree PACKED-FOREST gives."
+  (declare (optimize (speed 3) (safety 0))
+           (type packed-forest packed-forest)
+           (type (simple-array single-float (* *)) datamatrix)
+           (type fixnum datum-index))
+  (let ((feature (packed-forest-feature packed-forest))
+        (threshold (packed-forest-threshold packed-forest))
+        (left (packed-forest-left packed-forest))
+        (right (packed-forest-right packed-forest))
+        (classes (packed-forest-leaf-classes packed-forest))
+        (node (aref (packed-forest-roots packed-forest) 0)))
+    (declare (type (simple-array (unsigned-byte 32) (*)) feature classes)
+             (type (simple-array single-float (*)) threshold)
+             (type (simple-array (signed-byte 32) (*)) left right)
+             (type (signed-byte 32) node))
+    (loop while (>= node 0)
+          do (setf node (if (>= (aref datamatrix datum-index (aref feature node))
+                                (aref threshold node))
+                            (aref left node)
+                            (aref right node))))
+    (aref classes (lognot node))))
+
+(defun count-packed-forest-disagreements (forest packed datamatrix)
+  "How many rows PREDICT-FOREST and PREDICT-PACKED-FOREST answer differently."
+  (let ((acc (make-packed-accumulator packed))
+        (bad 0))
+    (dotimes (i (array-dimension datamatrix 0) bad)
+      (unless (= (predict-forest forest datamatrix i)
+                 (predict-packed-forest packed datamatrix i acc))
+        (incf bad)))))
+
+;;;; Bytes
+
+(defun array-bytes (array element-bits)
+  (ceiling (* (array-total-size array) element-bits) 8))
+
+(defun array-forest-bytes (af)
+  "Bytes in ARRAY-FOREST's node arrays, and in its leaf table, separately."
+  (values (+ (array-bytes (array-forest-feature af) 64)
+             (array-bytes (array-forest-threshold af) 32)
+             (array-bytes (array-forest-left af) 64)
+             (array-bytes (array-forest-right af) 64)
+             (array-bytes (array-forest-leaf-p af) 1))
+          (array-bytes (array-forest-distributions af) 32)))
+
+(defun packed-forest-bytes (pf)
+  "Bytes in PACKED-FOREST's node arrays, and in its leaf table, separately."
+  (values (+ (array-bytes (packed-forest-feature pf) 32)
+             (array-bytes (packed-forest-threshold pf) 32)
+             (array-bytes (packed-forest-left pf) 32)
+             (array-bytes (packed-forest-right pf) 32))
+          (array-bytes (packed-forest-distributions pf) 32)))
+
+;;;; array against packed, in one process
+
+(defun compare-layouts (n-class datamatrix target datamatrix-test n-tree max-depth n-trial)
+  "Build one forest, lay it out both ways, and report agreement, bytes and speed."
+  (let* ((forest (make-forest n-class datamatrix target
+                              :n-tree n-tree :bagging-ratio 0.1
+                              :max-depth max-depth :n-trial n-trial :min-region-samples 5)))
+    (multiple-value-bind (af af-seconds) (seconds (build-array-forest forest))
+      (multiple-value-bind (pf pf-seconds) (seconds (build-packed-forest forest))
+        (multiple-value-bind (af-nodes af-leaves) (array-forest-bytes af)
+          (multiple-value-bind (pf-nodes pf-leaves) (packed-forest-bytes pf)
+            (let ((af-acc (make-accumulator af))
+                  (pf-acc (make-packed-accumulator pf)))
+              (format t "~&| ~Dx d=~D | ~D / ~D | ~,1F / ~,1F MB nodes | ~,1F MB leaves | ~
+~,3F / ~,3F s build | ~,0F / ~,0F pred/s | ~,2Fx |~%"
+                      n-tree max-depth
+                      (count-array-forest-disagreements forest af datamatrix-test)
+                      (count-packed-forest-disagreements forest pf datamatrix-test)
+                      (/ af-nodes 1048576.0) (/ pf-nodes 1048576.0)
+                      (/ af-leaves 1048576.0)
+                      af-seconds pf-seconds
+                      (time-predictions (lambda (d i) (predict-array-forest af d i af-acc))
+                                        datamatrix-test)
+                      (time-predictions (lambda (d i) (predict-packed-forest pf d i pf-acc))
+                                        datamatrix-test)
+                      (/ (time-predictions (lambda (d i) (predict-packed-forest pf d i pf-acc))
+                                           datamatrix-test)
+                         (time-predictions (lambda (d i) (predict-array-forest af d i af-acc))
+                                           datamatrix-test)))
+              (force-output))))))))
+
+(defun compare-layout-trees (n-class datamatrix target datamatrix-test max-depth n-trial)
+  "The same comparison for a single tree, where the leaf payload is a class."
+  (let* ((forest (make-forest n-class datamatrix target
+                              :n-tree 1 :bagging-ratio 1.0
+                              :max-depth max-depth :n-trial n-trial :min-region-samples 5))
+         (dtree (first (forest-dtree-list forest)))
+         (af (build-array-forest forest :leaf-payload :class))
+         (pf (build-packed-forest forest :leaf-payload :class))
+         (af-bad 0)
+         (pf-bad 0))
+    (dotimes (i (array-dimension datamatrix-test 0))
+      (let ((expected (predict-dtree dtree datamatrix-test i)))
+        (unless (= expected (predict-array-tree af datamatrix-test i)) (incf af-bad))
+        (unless (= expected (predict-packed-tree pf datamatrix-test i)) (incf pf-bad))))
+    (format t "~&| tree d=~D | ~D / ~D | ~,0F / ~,0F pred/s | ~,2Fx |~%"
+            max-depth af-bad pf-bad
+            (time-predictions (lambda (d i) (predict-array-tree af d i)) datamatrix-test)
+            (time-predictions (lambda (d i) (predict-packed-tree pf d i)) datamatrix-test)
+            (/ (time-predictions (lambda (d i) (predict-packed-tree pf d i)) datamatrix-test)
+               (time-predictions (lambda (d i) (predict-array-tree af d i)) datamatrix-test)))
+    (force-output)))
+
+(defun run-layout-comparison (&key (dataset :letter) (depths '(5 10 15))
+                                   (configs '((500 5) (500 10))))
+  "array against packed: agreement, bytes, build time, speed. Ratios are packed / array."
+  (multiple-value-bind (datamatrix datamatrix-test target n-class n-trial)
+      (dataset-parts dataset)
+    (format t "~&=== array vs packed on ~A ===~%" dataset)
+    (format t "~&| model | disagreements a/p | node bytes a/p | leaf bytes | build a/p | pred/s a/p | ratio |~%")
+    (format t "|---|---|---|---|---|---|---|~%")
+    (force-output)
+    (dolist (depth depths)
+      (compare-layout-trees n-class datamatrix target datamatrix-test depth n-trial))
+    (dolist (config configs)
+      (compare-layouts n-class datamatrix target datamatrix-test
+                       (first config) (second config) n-trial))
+    (format t "~&LAYOUT_DONE~%")
+    (force-output)))
+
+;;;; array against packed, measured
+;;;;
+;;;; One forest per row, laid out both ways in the same process so the two are not being
+;;;; compared across runs. Ratios are packed / array. Both agree exactly with the library
+;;;; everywhere.
+;;;;
+;;;; letter:
+;;;;
+;;;; | model | node bytes a/p | build s a/p | pred/s array | pred/s packed | ratio |
+;;;; |---|---|---|---|---|---|
+;;;; | tree d=5   |     |             | 103219381 | 123479012 | 1.19x |
+;;;; | tree d=10  |     |             |  54659563 |  65199609 | 1.19x |
+;;;; | tree d=15  |     |             |  41219588 |  46189815 | 1.14x |
+;;;; | 500x d=5   | 0.8 / 0.2 MB | 0.010 / 0.007 |  38910 |  55350 | 1.43x |
+;;;; | 500x d=10  | 6.2 / 1.7 MB | 0.069 / 0.055 |   8361 |  15267 | 1.84x |
+;;;;
+;;;; MNIST:
+;;;;
+;;;; | model | node bytes a/p | build s a/p | pred/s array | pred/s packed | ratio |
+;;;; |---|---|---|---|---|---|
+;;;; | tree d=5   |      |             |  49419703 |  84219326 | 1.79x |
+;;;; | tree d=10  |      |             |  21139873 |  31399686 | 1.55x |
+;;;; | tree d=15  |      |             |  12439925 |  17839822 | 1.49x |
+;;;; | 500x d=5   |  0.8 / 0.2 MB | 0.007 / 0.006 |  56074 |  68610 | 1.23x |
+;;;; | 500x d=10  | 14.0 / 4.0 MB | 0.057 / 0.049 |   8077 |  19047 | 2.35x |
+;;;;
+;;;; The node arrays fall to between a quarter and a third: 14.0 MB to 4.0 MB on MNIST's
+;;;; largest forest. Dropping the leaves' unused slots accounts for about half of that and
+;;;; narrowing the indices from fixnum to 32 bits for the rest, which is what the two
+;;;; changes predict.
+;;;;
+;;;; Speed follows size. The gain is smallest on a single tree (1.14-1.19x on letter),
+;;;; where the arrays fit in cache either way and all that is saved is the bit-vector read
+;;;; per node, and largest on the biggest forest (2.35x on MNIST at depth 10), where 14 MB
+;;;; of node data did not fit and 4 MB comes closer. This is the first change in this file
+;;;; whose effect grows with model size rather than shrinking.
+;;;;
+;;;; It also closes most of the gap to the compiled representation. On MNIST 500x d=10 the
+;;;; earlier three-way table had walk 2336, array 8354, compiled 10638; packed reaches
+;;;; 19047 on its own forest, past compiled -- though on a different forest build, so the
+;;;; two need measuring side by side before that is claimed.
