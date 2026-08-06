@@ -262,12 +262,25 @@
 (deftest packed-float-bits-round-trip
   ;; The fast paths exist per implementation; the portable fallback is the reference. They
   ;; must agree, or a model saved on one implementation would not load on another.
-  (let ((values (list 0.0 1.0 -1.0 0.5 -0.5 3.14159 1.0e-8 1.0e8
-                      most-positive-single-float least-positive-normalized-single-float)))
+  ;;
+  ;; Both directions are cross-checked, and the list includes true denormals. An earlier
+  ;; version of this test used only LEAST-POSITIVE-NORMALIZED-SINGLE-FLOAT and compared
+  ;; encoding alone, and missed that the portable encoder wrote a bogus exponent field for
+  ;; every denormal -- 1.4012985e-45 came out as 00800001 where IEEE-754 says 00000001.
+  (let ((values (list 0.0 -0.0 1.0 -1.0 0.5 -0.5 3.14159 1.0e-8 1.0e8
+                      most-positive-single-float
+                      least-positive-normalized-single-float
+                      (/ least-positive-normalized-single-float 2.0)
+                      least-positive-single-float
+                      (- least-positive-single-float)
+                      (* 12345.0 least-positive-single-float))))
     (dolist (v values)
       (ok (= v (cl-random-forest/src/packed::bits-to-single-float
                 (cl-random-forest/src/packed::single-float-to-bits v)))
           (format nil "~S survives the bit round trip" v))
       (ok (= (cl-random-forest/src/packed::single-float-to-bits v)
              (cl-random-forest/src/packed::%portable-single-float-to-bits v))
-          (format nil "~S: fast path agrees with the portable one" v)))))
+          (format nil "~S: the fast encoder agrees with the portable one" v))
+      (ok (= v (cl-random-forest/src/packed::%portable-bits-to-single-float
+                (cl-random-forest/src/packed::single-float-to-bits v)))
+          (format nil "~S: the portable decoder agrees with the fast encoder" v)))))

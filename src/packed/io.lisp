@@ -8,7 +8,8 @@
            #:packed-load-error-detail
            #:single-float-to-bits
            #:bits-to-single-float
-           #:%portable-single-float-to-bits))
+           #:%portable-single-float-to-bits
+           #:%portable-bits-to-single-float))
 
 (in-package :cl-random-forest/src/packed/io)
 
@@ -36,10 +37,17 @@
   (if (zerop x)
       (if (minusp (float-sign x)) #x80000000 0)
       (multiple-value-bind (significand exponent sign) (integer-decode-float x)
-        (let ((biased (+ exponent 23 127)))
-          (logior (if (minusp sign) #x80000000 0)
-                  (ash (logand biased #xff) 23)
-                  (logand significand #x7fffff))))))
+        (let ((sign-bit (if (minusp sign) #x80000000 0)))
+          (if (< significand (ash 1 23))
+              ;; A denormal. INTEGER-DECODE-FLOAT leaves its significand unnormalised --
+              ;; LEAST-POSITIVE-SINGLE-FLOAT comes back as significand 1, exponent -149 --
+              ;; so the biased-exponent arithmetic below would write a bogus non-zero
+              ;; exponent field. IEEE-754 stores a denormal as exponent field zero and a
+              ;; fraction that is the value divided by 2^-149.
+              (logior sign-bit (ash significand (+ exponent 149)))
+              (logior sign-bit
+                      (ash (logand (+ exponent 23 127) #xff) 23)
+                      (logand significand #x7fffff)))))))
 
 (defun %portable-bits-to-single-float (bits)
   "The single-float whose IEEE-754 bits are BITS, in ANSI Common Lisp only."
