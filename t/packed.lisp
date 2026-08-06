@@ -111,3 +111,55 @@
                   (packed-topology-n-internal topology)
                   (packed-topology-n-leaf topology)
                   (packed-topology-n-tree topology))))))
+
+(deftest packed-classifier-agrees-bit-for-bit
+  ;; Agreement on the class alone is too weak -- two different distributions can share an
+  ;; argmax. Compare the whole distribution, and require exact equality: the same floats
+  ;; are summed in the same tree and class order, so anything else is a defect.
+  (with-serial-kernel
+    (multiple-value-bind (datamatrix target) (synthetic-classification-test)
+      (declare (ignore target))
+      (let ((forest (synthetic-forest)))
+        (dolist (payload '(:dense :csr))
+          (let ((classifier (build-packed-classifier forest :payload payload)))
+            (multiple-value-bind (class-bad dist-bad worst)
+                (packed-verify classifier forest datamatrix)
+              (ok (zerop class-bad)
+                  (format nil "~A: ~D classes differ" payload class-bad))
+              (ok (zerop dist-bad)
+                  (format nil "~A: ~D distributions differ" payload dist-bad))
+              (ok (zerop worst)
+                  (format nil "~A: worst absolute difference ~,10F" payload worst)))))))))
+
+(deftest packed-classifier-auto-picks-on-the-dense-row-size
+  ;; CSR once a dense row exceeds a cache line, dense below. Not the compression ratio:
+  ;; a 10-class model compresses 2.4x on that measure and runs 0.82x as fast.
+  ;;
+  ;; The rule is unit-tested on both sides of the boundary, because no fixture forest has
+  ;; enough classes to reach the CSR side -- the synthetic set has 4.
+  (let ((rule #'cl-random-forest/src/packed/classifier::choose-payload))
+    (ok (eq :dense (funcall rule 1)) "1 class is dense")
+    (ok (eq :dense (funcall rule 16)) "16 classes is dense, a row being exactly 64 bytes")
+    (ok (eq :csr (funcall rule 17)) "17 classes is csr, a row exceeding a cache line")
+    (ok (eq :csr (funcall rule 26)) "26 classes is csr"))
+  (with-serial-kernel
+    (let ((forest (synthetic-forest)))
+      (ok (eq :dense (packed-classifier-kind (build-packed-classifier forest)))
+          (format nil "a ~D-class forest selects dense" +synthetic-n-class+)))))
+
+(deftest packed-classifier-csr-holds-only-the-non-zero-entries
+  (with-serial-kernel
+    (let* ((forest (synthetic-forest))
+           (topology (build-packed-topology forest))
+           (dense (build-packed-classifier forest :payload :dense))
+           (csr (build-packed-classifier forest :payload :csr))
+           (n-leaf (packed-topology-n-leaf topology))
+           (n-class (packed-classifier-n-class dense))
+           (expected 0))
+      (dotimes (row n-leaf)
+        (dotimes (k n-class)
+          (unless (zerop (aref (packed-classifier-table dense) row k))
+            (incf expected))))
+      (ok (= expected (length (packed-classifier-probability csr)))
+          (format nil "~D non-zero entries, CSR stores ~D"
+                  expected (length (packed-classifier-probability csr)))))))
