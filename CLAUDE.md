@@ -55,7 +55,7 @@ Tests are split into feature systems, each of which can be run on its own:
 | `cl-random-forest-test/dataset` | dataset download and conversion (3) |
 | `cl-random-forest-test/decision-tree` | decision tree accuracy (2) |
 | `cl-random-forest-test/forest` | random forest accuracy (2) |
-| `cl-random-forest-test/refinement` | global refinement accuracy (2) |
+| `cl-random-forest-test/refinement` | global refinement accuracy and learner-type plumbing (6) |
 | `cl-random-forest-test/parallel` | parallelized training accuracy (4, SBCL only) |
 | `cl-random-forest-test/regression` | univariate regression behaviour (5) |
 | `cl-random-forest-test/pruning` | global pruning behaviour (5) |
@@ -74,8 +74,9 @@ There is no lint step. CI (`.github/workflows/ci.yml`) runs the matrix
 {sbcl-bin, ccl-bin} × {ubuntu-latest, macOS-latest}.
 
 Test/example caveats:
-- `cl-random-forest-test/regression` and `.../pruning` use deterministic synthetic data from
-  `cl-random-forest-test/fixture` and need no network. Everything else downloads datasets.
+- `cl-random-forest-test/regression`, `.../pruning`, and the four `refine-learner-*` tests in
+  `.../refinement` use `cl-random-forest-test/fixture`'s deterministic synthetic data and need
+  no network. Everything else downloads datasets.
 - Seven of those tests are **property assertions**, not pinned accuracy numbers, and three
   deliberately pin bugs that are still open: `regression-refine-learner-default-gamma-diverges`
   (issue #16), `pruning-strands-leaves-without-sample-indices` (issue #14) and
@@ -154,7 +155,10 @@ weights child gains by sample-count ratio, regression does not.
 `make-refine-dataset` maps each datum to the vector of leaf indices it reaches, one per tree,
 offset into a single global index space via `forest-index-offset` (cumulative
 `dtree-max-leaf-index`). That vector is fed to `cl-online-learning` as a sparse vector:
-sparse AROW for binary, `one-vs-rest` of sparse AROWs for multiclass, sparse RLS for regression.
+`make-refine-learner`'s default is sparse AROW for binary, `one-vs-rest` of sparse AROWs for
+multiclass, sparse RLS for regression. `make-refine-learner-of-type` swaps in any other
+`cl-online-learning` multiclass sparse learner (e.g. `sparse-lr+ftrl`, for L1-sparse weights) in
+place of AROW; it is multiclass-only, since `one-vs-rest` needs more than 2 classes.
 `train-refine-learner` is one epoch; `train-refine-learner-process` loops until dev accuracy stops
 improving (and is a **macro** — it `setf`s its first argument).
 
