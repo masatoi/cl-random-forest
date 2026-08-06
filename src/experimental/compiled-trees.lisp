@@ -48,6 +48,8 @@
                 #:node-left-node
                 #:node-right-node
                 #:node-class-distribution
+                #:node-sample-indices
+                #:class-distribution-forest
                 #:argmax)
   (:import-from #:cl-random-forest/src/utils
                 #:read-data))
@@ -1218,7 +1220,7 @@ LEAF-CLASSES with each leaf's argmax, which is what a single tree answers with."
     (multiple-value-bind (af af-seconds) (seconds (build-array-forest forest))
       (multiple-value-bind (pf pf-seconds) (seconds (build-packed-forest forest))
         (multiple-value-bind (af-nodes af-leaves) (array-forest-bytes af)
-          (multiple-value-bind (pf-nodes pf-leaves) (packed-forest-bytes pf)
+          (multiple-value-bind (pf-nodes) (packed-forest-bytes pf)
             (let ((af-acc (make-accumulator af))
                   (pf-acc (make-packed-accumulator pf)))
               (format t "~&| ~Dx d=~D | ~D / ~D | ~,1F / ~,1F MB nodes | ~,1F MB leaves | ~
@@ -1433,3 +1435,470 @@ SBCL-specific and looked up by name so the file still reads elsewhere."
 ;;;;   array     superseded by packed; kept only so the two can be compared
 ;;;;   walking   what the library does today, 3 to 8 times slower than any of them, and
 ;;;;             unsafe to call from more than one thread
+
+;;;; Second cut: topology separated from leaf payload
+;;;;
+;;;; PACKED-FOREST carries both a classifier's distribution table and a single tree's class
+;;;; array, one of which is always empty, and it computes whichever the caller asked for
+;;;; while building. Review of docs/packed-forest-layout.md pointed out what that costs:
+;;;;
+;;;;   - Refinement needs only the leaf a datum reaches, so building a payload at all is
+;;;;     waste -- and the iterated pruning loop rebuilds 16 to 19 times.
+;;;;   - Regression wants a scalar per leaf, which neither slot fits.
+;;;;   - The leaf table is two thirds of the memory, and leaves average two non-zero
+;;;;     classes of 26, so a sparse payload is worth far more than any further squeezing
+;;;;     of the node arrays.
+;;;;
+;;;; So: PACKED-TOPOLOGY is the tree structure and nothing else, and a payload is attached
+;;;; separately. The builder is two-pass, sizing exactly and validating before anything
+;;;; reaches a (safety 0) loop.
+
+(defstruct (packed-topology (:constructor %make-packed-topology))
+  "The structure of a forest: internal nodes, and which leaf a datum lands in.
+
+Leaf numbering is not left to the traversal order. Leaves are numbered
+tree-leaf-offsets[tree] + the tree's own leaf index, which is by construction the index
+Global Refinement uses (FOREST-INDEX-OFFSET plus NODE-LEAF-INDEX). Deriving it rather than
+letting two walks happen to agree is what lets the node ordering change later -- to
+breadth-first, or anything cache-conscious -- without silently renumbering the refine
+feature space."
+  (n-tree 0 :type fixnum)
+  (n-internal 0 :type fixnum)
+  (n-leaf 0 :type fixnum)
+  (feature (make-array 0 :element-type '(unsigned-byte 32))
+           :type (simple-array (unsigned-byte 32) (*)))
+  (threshold (make-array 0 :element-type 'single-float)
+             :type (simple-array single-float (*)))
+  (left (make-array 0 :element-type '(signed-byte 32))
+        :type (simple-array (signed-byte 32) (*)))
+  (right (make-array 0 :element-type '(signed-byte 32))
+         :type (simple-array (signed-byte 32) (*)))
+  (roots (make-array 0 :element-type '(signed-byte 32))
+         :type (simple-array (signed-byte 32) (*)))
+  (tree-leaf-offsets (make-array 0 :element-type '(unsigned-byte 32))
+                     :type (simple-array (unsigned-byte 32) (*))))
+
+(define-condition packed-build-error (error)
+  ((detail :initarg :detail :reader packed-build-error-detail))
+  (:report (lambda (c s) (format s "cannot pack this forest: ~A"
+                                 (packed-build-error-detail c))))
+  (:documentation
+   "Signalled for anything the packed traversal could not survive.
+
+The traversal runs at (safety 0) and trusts its declarations, so every assumption it makes
+has to hold before it starts: indices in range, both children present, and -- the one that
+is not obvious -- a leaf that still has its sample indices. CLASS-DISTRIBUTION returns a
+*uniform* distribution rather than signalling when a leaf has none, which pruning creates
+by default (issue #14), so a builder that just read it would freeze a uniform distribution
+into the model with nothing to show for it."))
+
+(defun check-packable (forest)
+  "Signal PACKED-BUILD-ERROR unless FOREST can be packed. Returns the datum dimension."
+  (let ((dtrees (forest-dtree-list forest))
+        (dim (forest-datum-dim forest)))
+    (unless (= (length dtrees) (forest-n-tree forest))
+      (error 'packed-build-error
+             :detail (format nil "~D trees in the list, FOREST-N-TREE says ~D"
+                             (length dtrees) (forest-n-tree forest))))
+    (labels ((walk (node depth)
+               (cond
+                 ((null node)
+                  (error 'packed-build-error :detail "a nil node"))
+                 ((node-test-attribute node)
+                  (let ((f (node-test-attribute node)))
+                    (unless (and (typep f 'fixnum) (<= 0 f) (< f dim))
+                      (error 'packed-build-error
+                             :detail (format nil "feature ~S out of [0,~D) at depth ~D"
+                                             f dim depth)))
+                    (unless (typep (node-test-threshold node) 'single-float)
+                      (error 'packed-build-error
+                             :detail (format nil "threshold ~S is not a single-float"
+                                             (node-test-threshold node))))
+                    (unless (and (node-left-node node) (node-right-node node))
+                      (error 'packed-build-error
+                             :detail "an internal node with only one child"))
+                    (walk (node-left-node node) (1+ depth))
+                    (walk (node-right-node node) (1+ depth))))
+                 (t
+                  ;; A leaf. Its distribution has to be derivable, not invented.
+                  (unless (node-sample-indices node)
+                    (error 'packed-build-error
+                           :detail (format nil "a leaf at depth ~D has no sample indices, ~
+so its class distribution would silently come out uniform (issue #14) -- rebuild the ~
+forest with :remove-sample-indices? nil" depth)))))))
+      (dolist (dtree dtrees dim)
+        (walk (dtree-root dtree) 0)))))
+
+(defun count-tree-nodes (dtree)
+  "Return (values n-internal n-leaf) for DTREE."
+  (let ((internal 0) (leaves 0))
+    (labels ((walk (node)
+               (if (node-test-attribute node)
+                   (progn (incf internal)
+                          (walk (node-left-node node))
+                          (walk (node-right-node node)))
+                   (incf leaves))))
+      (walk (dtree-root dtree)))
+    (values internal leaves)))
+
+(defun build-packed-topology (forest)
+  "Flatten FOREST's structure. Two passes: count and validate, then fill exact-size arrays."
+  (check-packable forest)
+  (let* ((dtrees (forest-dtree-list forest))
+         (n-tree (length dtrees))
+         (internal-counts (make-array n-tree))
+         (leaf-counts (make-array n-tree))
+         (n-internal 0)
+         (n-leaf 0))
+    (loop for dtree in dtrees
+          for tree from 0
+          do (multiple-value-bind (i l) (count-tree-nodes dtree)
+               (setf (svref internal-counts tree) i
+                     (svref leaf-counts tree) l)
+               (incf n-internal i)
+               (incf n-leaf l)))
+    (unless (< n-internal (expt 2 31))
+      (error 'packed-build-error
+             :detail (format nil "~D internal nodes exceeds a (signed-byte 32) index"
+                             n-internal)))
+    (unless (< n-leaf (expt 2 31))
+      (error 'packed-build-error
+             :detail (format nil "~D leaves exceeds a (signed-byte 32) index" n-leaf)))
+    (let ((feature (make-array n-internal :element-type '(unsigned-byte 32)))
+          (threshold (make-array n-internal :element-type 'single-float))
+          (left (make-array n-internal :element-type '(signed-byte 32)))
+          (right (make-array n-internal :element-type '(signed-byte 32)))
+          (roots (make-array n-tree :element-type '(signed-byte 32)))
+          (offsets (make-array n-tree :element-type '(unsigned-byte 32)))
+          (node-cursor 0)
+          (leaf-base 0))
+      (loop for dtree in dtrees
+            for tree from 0
+            do (setf (aref offsets tree) leaf-base)
+               (let ((local-leaf 0))
+                 (labels ((emit (node)
+                            (cond
+                              ((node-test-attribute node)
+                               (let ((self node-cursor))
+                                 (incf node-cursor)
+                                 (setf (aref feature self) (node-test-attribute node)
+                                       (aref threshold self) (node-test-threshold node))
+                                 (setf (aref left self) (emit (node-left-node node)))
+                                 (setf (aref right self) (emit (node-right-node node)))
+                                 self))
+                              (t
+                               ;; The leaf's global number, by construction the refine index.
+                               (prog1 (lognot (+ leaf-base local-leaf))
+                                 (incf local-leaf))))))
+                   (setf (aref roots tree) (emit (dtree-root dtree))))
+                 (incf leaf-base local-leaf)))
+      (%make-packed-topology
+       :n-tree n-tree :n-internal n-internal :n-leaf n-leaf
+       :feature feature :threshold threshold :left left :right right
+       :roots roots :tree-leaf-offsets offsets))))
+
+(declaim (inline topology-leaf))
+(defun topology-leaf (topology datamatrix datum-index root)
+  "The leaf number a datum reaches from ROOT. This is the refine index."
+  (declare (optimize (speed 3) (safety 0))
+           (type packed-topology topology)
+           (type (simple-array single-float (* *)) datamatrix)
+           (type fixnum datum-index)
+           (type (signed-byte 32) root))
+  (let ((feature (packed-topology-feature topology))
+        (threshold (packed-topology-threshold topology))
+        (left (packed-topology-left topology))
+        (right (packed-topology-right topology))
+        (node root))
+    (declare (type (simple-array (unsigned-byte 32) (*)) feature)
+             (type (simple-array single-float (*)) threshold)
+             (type (simple-array (signed-byte 32) (*)) left right)
+             (type (signed-byte 32) node))
+    (loop while (>= node 0)
+          do (setf node (if (>= (aref datamatrix datum-index (aref feature node))
+                                (aref threshold node))
+                            (aref left node)
+                            (aref right node))))
+    (lognot node)))
+
+(defun topology-leaves (topology datamatrix datum-index out)
+  "Fill OUT with the leaf each tree sends a datum to. This is MAKE-REFINE-VECTOR's answer."
+  (declare (optimize (speed 3) (safety 0))
+           (type packed-topology topology)
+           (type (simple-array single-float (* *)) datamatrix)
+           (type (simple-array fixnum (*)) out)
+           (type fixnum datum-index))
+  (let ((roots (packed-topology-roots topology))
+        (n-tree (packed-topology-n-tree topology)))
+    (declare (type (simple-array (signed-byte 32) (*)) roots)
+             (type fixnum n-tree))
+    (dotimes (tree n-tree out)
+      (setf (aref out tree) (topology-leaf topology datamatrix datum-index
+                                           (aref roots tree))))))
+
+;;;; Leaf payloads
+;;;;
+;;;; Two classifier payloads over one topology. Dense is the n-leaf x n-class table
+;;;; PACKED-FOREST used. CSR keeps only the non-zero classes, which the measurement in
+;;;; docs/packed-forest-layout.md says is 2.04 of 26 on letter and 2.06 of 10 on MNIST.
+;;;;
+;;;; Skipping the zeros is exact rather than approximate. Every value is non-negative, so
+;;;; omitting a `+ 0.0` changes no sum, and the accumulator ends bit-identical to the dense
+;;;; one -- which the tests check element by element, not merely after ARGMAX.
+
+(defstruct (dense-classifier (:constructor %make-dense-classifier))
+  "A distribution per leaf, stored in full."
+  (topology (%make-packed-topology) :type packed-topology)
+  (n-class 0 :type fixnum)
+  (table (make-array '(0 0) :element-type 'single-float)
+         :type (simple-array single-float (* *))))
+
+(defstruct (csr-classifier (:constructor %make-csr-classifier))
+  "A distribution per leaf, stored as its non-zero entries.
+
+OFFSETS has n-leaf + 1 entries; leaf L occupies [offsets[L], offsets[L+1]) of CLASS and
+PROBABILITY."
+  (topology (%make-packed-topology) :type packed-topology)
+  (n-class 0 :type fixnum)
+  (offsets (make-array 1 :element-type '(unsigned-byte 32))
+           :type (simple-array (unsigned-byte 32) (*)))
+  (class (make-array 0 :element-type '(unsigned-byte 16))
+         :type (simple-array (unsigned-byte 16) (*)))
+  (probability (make-array 0 :element-type 'single-float)
+               :type (simple-array single-float (*))))
+
+(defun collect-leaf-distributions (forest topology)
+  "A simple-vector of every leaf's distribution, indexed by the topology's leaf number."
+  (let ((out (make-array (packed-topology-n-leaf topology)))
+        (offsets (packed-topology-tree-leaf-offsets topology)))
+    (loop for dtree in (forest-dtree-list forest)
+          for tree from 0
+          do (let ((local 0)
+                   (base (aref offsets tree)))
+               (labels ((walk (node)
+                          (if (node-test-attribute node)
+                              (progn (walk (node-left-node node))
+                                     (walk (node-right-node node)))
+                              (progn (setf (svref out (+ base local))
+                                           (leaf-distribution node))
+                                     (incf local)))))
+                 (walk (dtree-root dtree)))))
+    out))
+
+(defun build-dense-classifier (forest &optional (topology (build-packed-topology forest)))
+  (let* ((n-class (forest-n-class forest))
+         (n-leaf (packed-topology-n-leaf topology))
+         (dists (collect-leaf-distributions forest topology))
+         (table (make-array (list (max n-leaf 1) n-class)
+                            :element-type 'single-float :initial-element 0.0)))
+    (dotimes (row n-leaf)
+      (let ((d (svref dists row)))
+        (dotimes (k n-class) (setf (aref table row k) (aref d k)))))
+    (%make-dense-classifier :topology topology :n-class n-class :table table)))
+
+(defun build-csr-classifier (forest &optional (topology (build-packed-topology forest)))
+  (let* ((n-class (forest-n-class forest))
+         (n-leaf (packed-topology-n-leaf topology))
+         (dists (collect-leaf-distributions forest topology))
+         (nnz 0))
+    (unless (< n-class 65536)
+      (error 'packed-build-error
+             :detail (format nil "~D classes exceeds a (unsigned-byte 16) class index"
+                             n-class)))
+    (dotimes (row n-leaf)
+      (let ((d (svref dists row)))
+        (dotimes (k n-class) (unless (zerop (aref d k)) (incf nnz)))))
+    (let ((offsets (make-array (1+ n-leaf) :element-type '(unsigned-byte 32)))
+          (class (make-array (max nnz 1) :element-type '(unsigned-byte 16)))
+          (probability (make-array (max nnz 1) :element-type 'single-float))
+          (cursor 0))
+      (dotimes (row n-leaf)
+        (setf (aref offsets row) cursor)
+        (let ((d (svref dists row)))
+          (dotimes (k n-class)
+            (let ((p (aref d k)))
+              (unless (zerop p)
+                (setf (aref class cursor) k
+                      (aref probability cursor) p)
+                (incf cursor))))))
+      (setf (aref offsets n-leaf) cursor)
+      (%make-csr-classifier :topology topology :n-class n-class
+                            :offsets offsets :class class :probability probability))))
+
+(defun predict-dense (classifier datamatrix datum-index acc)
+  "PREDICT-FOREST's answer from a dense payload. Writes only ACC."
+  (declare (optimize (speed 3) (safety 0))
+           (type dense-classifier classifier)
+           (type (simple-array single-float (* *)) datamatrix)
+           (type (simple-array single-float (*)) acc)
+           (type fixnum datum-index))
+  (let* ((topology (dense-classifier-topology classifier))
+         (table (dense-classifier-table classifier))
+         (n-class (dense-classifier-n-class classifier))
+         (roots (packed-topology-roots topology))
+         (n-tree (packed-topology-n-tree topology)))
+    (declare (type (simple-array single-float (* *)) table)
+             (type (simple-array (signed-byte 32) (*)) roots)
+             (type fixnum n-class n-tree))
+    (dotimes (k n-class) (setf (aref acc k) 0.0))
+    (dotimes (tree n-tree)
+      (let ((row (topology-leaf topology datamatrix datum-index (aref roots tree))))
+        (declare (type fixnum row))
+        (dotimes (k n-class) (incf (aref acc k) (aref table row k)))))
+    (dotimes (k n-class) (setf (aref acc k) (/ (aref acc k) n-tree)))
+    (argmax acc)))
+
+(defun predict-csr (classifier datamatrix datum-index acc)
+  "PREDICT-FOREST's answer from a CSR payload. Writes only ACC."
+  (declare (optimize (speed 3) (safety 0))
+           (type csr-classifier classifier)
+           (type (simple-array single-float (* *)) datamatrix)
+           (type (simple-array single-float (*)) acc)
+           (type fixnum datum-index))
+  (let* ((topology (csr-classifier-topology classifier))
+         (offsets (csr-classifier-offsets classifier))
+         (class (csr-classifier-class classifier))
+         (probability (csr-classifier-probability classifier))
+         (n-class (csr-classifier-n-class classifier))
+         (roots (packed-topology-roots topology))
+         (n-tree (packed-topology-n-tree topology)))
+    (declare (type (simple-array (unsigned-byte 32) (*)) offsets)
+             (type (simple-array (unsigned-byte 16) (*)) class)
+             (type (simple-array single-float (*)) probability)
+             (type (simple-array (signed-byte 32) (*)) roots)
+             (type fixnum n-class n-tree))
+    (dotimes (k n-class) (setf (aref acc k) 0.0))
+    (dotimes (tree n-tree)
+      (let ((leaf (topology-leaf topology datamatrix datum-index (aref roots tree))))
+        (declare (type fixnum leaf))
+        (loop for i of-type fixnum from (aref offsets leaf) below (aref offsets (1+ leaf))
+              do (incf (aref acc (aref class i)) (aref probability i)))))
+    (dotimes (k n-class) (setf (aref acc k) (/ (aref acc k) n-tree)))
+    (argmax acc)))
+
+;;;; Agreement, on distributions as well as classes
+
+(defun count-payload-disagreements (forest predict-fn n-class datamatrix)
+  "Rows where PREDICT-FN's class or distribution differs from the library's.
+
+Returns (values class-differing distribution-differing worst-absolute-difference)."
+  (let ((acc (make-array n-class :element-type 'single-float :initial-element 0.0))
+        (class-bad 0) (dist-bad 0) (worst 0.0))
+    (dotimes (i (array-dimension datamatrix 0) (values class-bad dist-bad worst))
+      (let ((reference-class (predict-forest forest datamatrix i))
+            (reference-dist (copy-seq (class-distribution-forest forest datamatrix i))))
+        (unless (= reference-class (funcall predict-fn datamatrix i acc))
+          (incf class-bad))
+        (let ((row-bad nil))
+          (dotimes (k n-class)
+            (let ((d (abs (- (aref reference-dist k) (aref acc k)))))
+              (when (> d 0.0) (setf row-bad t))
+              (setf worst (max worst d))))
+          (when row-bad (incf dist-bad)))))))
+
+(defun classifier-bytes (thing)
+  "Bytes in the leaf payload of a dense or CSR classifier."
+  (etypecase thing
+    (dense-classifier (array-bytes (dense-classifier-table thing) 32))
+    (csr-classifier (+ (array-bytes (csr-classifier-offsets thing) 32)
+                       (array-bytes (csr-classifier-class thing) 16)
+                       (array-bytes (csr-classifier-probability thing) 32)))))
+
+(defun topology-bytes (topology)
+  (+ (array-bytes (packed-topology-feature topology) 32)
+     (array-bytes (packed-topology-threshold topology) 32)
+     (array-bytes (packed-topology-left topology) 32)
+     (array-bytes (packed-topology-right topology) 32)
+     (array-bytes (packed-topology-roots topology) 32)
+     (array-bytes (packed-topology-tree-leaf-offsets topology) 32)))
+
+;;;; dense against CSR
+
+(defun compare-payloads (n-class datamatrix target datamatrix-test n-tree max-depth n-trial)
+  "One forest, one topology, both payloads: agreement, bytes and speed."
+  (let ((forest (make-forest n-class datamatrix target
+                             :n-tree n-tree :bagging-ratio 0.1 :max-depth max-depth
+                             :n-trial n-trial :min-region-samples 5
+                             ;; The builder refuses a forest whose leaves lost their
+                             ;; indices, so ask for them up front.
+                             :remove-sample-indices? nil)))
+    (multiple-value-bind (topology topology-seconds) (seconds (build-packed-topology forest))
+      (multiple-value-bind (dense dense-seconds)
+          (seconds (build-dense-classifier forest topology))
+        (multiple-value-bind (csr csr-seconds) (seconds (build-csr-classifier forest topology))
+          (multiple-value-bind (dense-class dense-dist dense-worst)
+              (count-payload-disagreements forest
+                                           (lambda (d i acc) (predict-dense dense d i acc))
+                                           n-class datamatrix-test)
+            (multiple-value-bind (csr-class csr-dist csr-worst)
+                (count-payload-disagreements forest
+                                             (lambda (d i acc) (predict-csr csr d i acc))
+                                             n-class datamatrix-test)
+              (let ((dense-acc (make-array n-class :element-type 'single-float
+                                                   :initial-element 0.0))
+                    (csr-acc (make-array n-class :element-type 'single-float
+                                                 :initial-element 0.0)))
+                (format t "~&| ~Dx d=~D | ~D/~D/~,1F ~D/~D/~,1F | ~,2F topo ~,2F dense ~,2F csr | ~
+~,1F / ~,1F / ~,1F MB | ~,0F / ~,0F | ~,2Fx |~%"
+                        n-tree max-depth
+                        dense-class dense-dist dense-worst csr-class csr-dist csr-worst
+                        topology-seconds dense-seconds csr-seconds
+                        (/ (topology-bytes topology) 1048576.0)
+                        (/ (classifier-bytes dense) 1048576.0)
+                        (/ (classifier-bytes csr) 1048576.0)
+                        (time-predictions (lambda (d i) (predict-dense dense d i dense-acc))
+                                          datamatrix-test)
+                        (time-predictions (lambda (d i) (predict-csr csr d i csr-acc))
+                                          datamatrix-test)
+                        (/ (time-predictions (lambda (d i) (predict-csr csr d i csr-acc))
+                                             datamatrix-test)
+                           (time-predictions (lambda (d i) (predict-dense dense d i dense-acc))
+                                             datamatrix-test)))
+                (force-output)))))))))
+
+(defun run-payload-comparison (&key (dataset :letter) (configs '((500 5) (500 10))))
+  "dense against CSR over one topology. Disagreements are class/distribution/worst-diff."
+  (multiple-value-bind (datamatrix datamatrix-test target n-class n-trial)
+      (dataset-parts dataset)
+    (format t "~&=== dense vs csr leaf payload on ~A ===~%" dataset)
+    (format t "~&| model | dense c/d/w  csr c/d/w | build s | topo / dense / csr MB | dense / csr pred/s | ratio |~%")
+    (format t "|---|---|---|---|---|---|~%")
+    (force-output)
+    (dolist (config configs)
+      (compare-payloads n-class datamatrix target datamatrix-test
+                        (first config) (second config) n-trial))
+    (format t "~&PAYLOAD_DONE~%")
+    (force-output)))
+
+;;;; dense against CSR, measured
+;;;;
+;;;; One forest and one topology per row, both payloads built from it. Disagreements are
+;;;; class / distribution / worst absolute difference, against PREDICT-FOREST and
+;;;; CLASS-DISTRIBUTION-FOREST. Every one is 0/0/0.0: the payloads are bit-identical to the
+;;;; library, not merely equal after ARGMAX.
+;;;;
+;;;; | | topo MB | dense MB | csr MB | dense pred/s | csr pred/s | ratio |
+;;;; |---|---|---|---|---|---|---|
+;;;; | letter 500x d=5  | 0.2 |  1.5 | 0.7 | 50933 | 49407 | 0.97x |
+;;;; | letter 500x d=10 | 1.7 | 11.3 | 1.8 | 16207 | 24154 | 1.50x |
+;;;; | MNIST 500x d=5   | 0.2 |  0.6 | 0.7 | 67113 | 57142 | 0.85x |
+;;;; | MNIST 500x d=10  | 4.0 |  9.9 | 4.1 | 19342 | 15823 | 0.82x |
+;;;;
+;;;; The memory prediction held: letter's leaf table falls 11.3 MB to 1.8 MB at depth 10,
+;;;; a 6.3x against the 7.3x the non-zero profile predicted. MNIST's barely moves, 9.9 to
+;;;; 4.1, and at depth 5 CSR is *larger* than dense -- with 10 classes, 40 bytes a leaf
+;;;; dense against 4 + 5s with s just over 2, there is almost nothing to win.
+;;;;
+;;;; Speed does not follow memory the way it did for the node arrays. CSR wins where the
+;;;; saving is large (1.50x on letter at depth 10) and loses where it is not (0.82-0.85x on
+;;;; MNIST), because it trades a straight-line run over n-class contiguous floats for an
+;;;; indirect one: two offset loads, then a class index per non-zero to scatter through.
+;;;; With 10 classes the dense run is 40 bytes -- under a cache line -- and the indirection
+;;;; costs more than the bytes saved.
+;;;;
+;;;; So the rule is class count, not sparsity. CSR pays when n-class is large enough that a
+;;;; dense row spans several cache lines; dense pays when a row is a cache line or less.
+;;;; letter's 26 classes are past the crossover and MNIST's 10 are not. A builder choosing
+;;;; between them on n-class and the measured mean non-zero count, as the review suggested,
+;;;; is the right shape -- but it should choose on the dense row's size rather than on the
+;;;; compression ratio, which is what would have picked wrong here.
