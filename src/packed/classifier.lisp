@@ -24,7 +24,9 @@
            #:%make-packed-classifier
            #:build-packed-classifier
            #:make-packed-accumulator
+           #:make-packed-accumulators
            #:packed-predict
+           #:packed-predict-batch
            #:packed-verify))
 
 (in-package :cl-random-forest/src/packed/classifier)
@@ -163,6 +165,67 @@ CSR's offset loads and scattered writes cost more than the bytes saved."
                    do (incf (aref acc (aref class i)) (aref probability i))))))))
     (dotimes (k n-class) (setf (aref acc k) (/ (aref acc k) n-tree)))
     (argmax acc)))
+
+(defun make-packed-accumulators (classifier tile)
+  "Accumulators for PACKED-PREDICT-BATCH: one row per datum in the tile."
+  (make-array (list tile (packed-classifier-n-class classifier))
+              :element-type 'single-float :initial-element 0.0))
+
+(defun packed-predict-batch (classifier datamatrix start end accs out)
+  "Predict rows [START,END) a tree at a time, writing classes into OUT indexed from zero.
+
+Walking one tree over the whole tile before moving to the next touches each tree's arrays
+once per tile instead of once per datum. The cost is holding (END - START) x n-class
+accumulators, which is why a tile of one loses and a tile of a few hundred wins."
+  (declare (optimize (speed 3) (safety 0))
+           (type packed-classifier classifier)
+           (type (simple-array single-float (* *)) datamatrix accs)
+           (type (simple-array fixnum (*)) out)
+           (type fixnum start end))
+  (let* ((topology (packed-classifier-topology classifier))
+         (n-class (packed-classifier-n-class classifier))
+         (roots (packed-topology-roots topology))
+         (n-tree (packed-topology-n-tree topology))
+         (tile (- end start)))
+    (declare (type (simple-array (signed-byte 32) (*)) roots)
+             (type fixnum n-class n-tree tile))
+    (dotimes (r tile)
+      (dotimes (k n-class) (setf (aref accs r k) 0.0)))
+    (ecase (packed-classifier-kind classifier)
+      (:dense
+       (let ((table (packed-classifier-table classifier)))
+         (declare (type (simple-array single-float (* *)) table))
+         (dotimes (tree n-tree)
+           (let ((root (aref roots tree)))
+             (dotimes (r tile)
+               (let ((row (packed-leaf topology datamatrix (+ start r) root)))
+                 (declare (type fixnum row))
+                 (dotimes (k n-class)
+                   (incf (aref accs r k) (aref table row k)))))))))
+      (:csr
+       (let ((offsets (packed-classifier-offsets classifier))
+             (class (packed-classifier-class classifier))
+             (probability (packed-classifier-probability classifier)))
+         (declare (type (simple-array (unsigned-byte 32) (*)) offsets)
+                  (type (simple-array (unsigned-byte 16) (*)) class)
+                  (type (simple-array single-float (*)) probability))
+         (dotimes (tree n-tree)
+           (let ((root (aref roots tree)))
+             (dotimes (r tile)
+               (let ((leaf (packed-leaf topology datamatrix (+ start r) root)))
+                 (declare (type fixnum leaf))
+                 (loop for i of-type fixnum
+                         from (aref offsets leaf) below (aref offsets (1+ leaf))
+                       do (incf (aref accs r (aref class i))
+                                (aref probability i))))))))))
+    (dotimes (r tile out)
+      (let ((best most-negative-single-float)
+            (best-k 0))
+        (declare (type single-float best) (type fixnum best-k))
+        (dotimes (k n-class)
+          (let ((v (/ (aref accs r k) n-tree)))
+            (when (> v best) (setf best v best-k k))))
+        (setf (aref out r) best-k)))))
 
 (defun packed-verify (classifier forest datamatrix)
   "Compare CLASSIFIER with FOREST over every row of DATAMATRIX.

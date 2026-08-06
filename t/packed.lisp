@@ -163,3 +163,31 @@
       (ok (= expected (length (packed-classifier-probability csr)))
           (format nil "~D non-zero entries, CSR stores ~D"
                   expected (length (packed-classifier-probability csr)))))))
+
+(deftest packed-batch-agrees-with-per-datum
+  ;; Tree-major batching walks one tree over a whole tile before moving to the next, which
+  ;; changes the order arrays are touched but not the arithmetic: each datum's accumulator
+  ;; receives the same values in the same tree order.
+  (with-serial-kernel
+    (multiple-value-bind (datamatrix target) (synthetic-classification-test)
+      (declare (ignore target))
+      (let* ((forest (synthetic-forest))
+             (n-rows (array-dimension datamatrix 0)))
+        (dolist (payload '(:dense :csr))
+          (let* ((classifier (build-packed-classifier forest :payload payload))
+                 (acc (make-packed-accumulator classifier))
+                 (bad 0))
+            (dolist (tile (list 1 7 64 n-rows))
+              (let ((accs (make-packed-accumulators classifier tile))
+                    (out (make-array tile :element-type 'fixnum))
+                    (i 0))
+                (loop while (< i n-rows)
+                      do (let ((end (min n-rows (+ i tile))))
+                           (packed-predict-batch classifier datamatrix i end accs out)
+                           (loop for j from i below end
+                                 do (unless (= (aref out (- j i))
+                                               (packed-predict classifier datamatrix j acc))
+                                      (incf bad)))
+                           (setf i end)))))
+            (ok (zerop bad)
+                (format nil "~A: ~D batch answers differ from per-datum" payload bad))))))))
