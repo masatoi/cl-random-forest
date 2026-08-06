@@ -1056,3 +1056,240 @@ identical, which is the finding: there is nothing for a difference-based criteri
                 (plain-sibling-zero-counts forest learner))
         (format t "~&SIBLING_CHECK_DONE~%")
         (force-output)))))
+
+;;;; Is lambda1 a size dial, or a pruning rate wearing a hat?
+;;;;
+;;;; The hybrid's selling point is that no pruning rate is chosen. That is only a real
+;;;; simplification if lambda1 is easier to set than a rate would be. Two things decide it:
+;;;; how widely the final size swings with lambda1, and whether accuracy survives across
+;;;; the range. A rate set too high costs accuracy; if AROW refits to full accuracy at
+;;;; every lambda1, then lambda1 picks a size without risking correctness, which a rate
+;;;; does not.
+;;;;
+;;;; Caveat to read the high end with: a larger lambda1 delays learning, because |z| has to
+;;;; cross it before a weight leaves zero at all. At *EPOCHS* 20 the lambda1 100 runs were
+;;;; still climbing. An under-trained round over-prunes -- a coordinate can sit at zero
+;;;; because it has not accumulated yet, not because the pair is mergeable -- and iterating
+;;;; compounds that. The AROW column is unaffected (AROW converges fast on whatever
+;;;; structure it is handed); the FTRL column and the sizes at high lambda1 are not.
+
+(defun run-lambda1-sweep (dataset &key (lambda1-list '(0.0 1.0 3.0 10.0 30.0 100.0))
+                                       (max-rounds 20) (seed 42))
+  "Run the whole hybrid pipeline at each lambda1 from a bit-identical seeded forest."
+  (multiple-value-bind (datamatrix datamatrix-test train-target test-target)
+      (ecase dataset
+        (:letter (multiple-value-bind (dm tg) (cl-random-forest-test/fixture:letter-train)
+                   (multiple-value-bind (dmt tgt) (cl-random-forest-test/fixture:letter-test)
+                     (values dm dmt tg tgt))))
+        (:mnist (mnist-data)))
+    (format t "~&=== LAMBDA1 SWEEP ~A, seed ~D, epochs ~D ===~%" dataset seed *epochs*)
+    (let* ((baseline-forest (build-seeded-forest dataset datamatrix train-target seed))
+           (baseline-leaves (leaf-count baseline-forest))
+           (baseline (train-plain-arow baseline-forest datamatrix datamatrix-test
+                                       train-target test-target))
+           (rows '()))
+      (format t "~&AROW baseline, unpruned: ~,2F at ~D leaves~%" baseline baseline-leaves)
+      (force-output)
+      (dolist (lambda1 lambda1-list)
+        (let ((forest (build-seeded-forest dataset datamatrix train-target seed)))
+          (format t "~&--- lambda1 ~,1F ---~%" lambda1)
+          (force-output)
+          (let* ((iterated (run-iterated-pruning forest datamatrix datamatrix-test
+                                                 train-target test-target
+                                                 :lambda1 lambda1 :max-rounds max-rounds))
+                 (rounds (length iterated))
+                 (fused-final (getf (car (last iterated)) :accuracy))
+                 (leaves (leaf-count forest))
+                 (arow (train-plain-arow forest datamatrix datamatrix-test
+                                         train-target test-target)))
+            (push (list :lambda1 lambda1 :rounds rounds :leaves leaves
+                        :fraction (/ (float leaves) baseline-leaves)
+                        :fused fused-final :arow arow)
+                  rows)
+            (format t "~&SWEEP lambda1 ~,1F rounds ~D leaves ~D (~,1F%) fused ~,2F arow ~,2F~%"
+                    lambda1 rounds leaves (* 100.0 (/ (float leaves) baseline-leaves))
+                    fused-final arow)
+            (force-output))))
+      (setf rows (nreverse rows))
+      (format t "~&~%| lambda1 | rounds | leaves | % of original | FTRL own | AROW refit | vs baseline |~%")
+      (format t "|---|---|---|---|---|---|---|~%")
+      (dolist (row rows)
+        (format t "| ~,1F | ~D | ~D | ~,1F% | ~,2F | ~,2F | ~,2F |~%"
+                (getf row :lambda1) (getf row :rounds) (getf row :leaves)
+                (* 100.0 (getf row :fraction)) (getf row :fused) (getf row :arow)
+                (- (getf row :arow) baseline)))
+      (format t "~&baseline ~,2F at ~D leaves~%" baseline baseline-leaves)
+      (format t "~&SWEEP_DONE~%")
+      (force-output)
+      rows)))
+
+;;;; Which learner should do the final fit?
+;;;;
+;;;; The hybrid's split -- FTRL chooses the structure, something else fits the model --
+;;;; leaves the second half open. AROW is the incumbent, but nothing about the split
+;;;; requires it, and cl-online-learning has other confidence-weighted learners. SCW is the
+;;;; obvious next one: same family, an explicit aggressiveness parameter C and confidence
+;;;; parameter eta where AROW has a single gamma.
+;;;;
+;;;; Measuring each candidate on the unpruned forest as well as the pruned one separates
+;;;; "this learner is better" from "this learner copes with pruning better".
+
+(defun train-plain-final (forest datamatrix datamatrix-test train-target test-target
+                          &optional learner-args)
+  "Train a final refine learner on FOREST in the plain encoding, return its accuracy.
+LEARNER-ARGS is NIL for the incumbent AROW, or a (type . params) list handed to
+MAKE-REFINE-LEARNER-OF-TYPE."
+  (let ((refine-train (make-refine-dataset forest datamatrix))
+        (refine-test (make-refine-dataset forest datamatrix-test))
+        (learner (if learner-args
+                     (apply #'make-refine-learner-of-type forest learner-args)
+                     (make-refine-learner forest))))
+    (dotimes (epoch *epochs*)
+      (train-refine-learner learner refine-train train-target))
+    (test-refine-learner learner refine-test test-target :quiet-p t)))
+
+(defparameter *final-learners*
+  '((:arow      . nil)
+    (:scw-c0.1  . (clol::sparse-scw 0.9 0.1))
+    (:scw-c1.0  . (clol::sparse-scw 0.9 1.0))
+    (:scw-c10   . (clol::sparse-scw 0.9 10.0)))
+  "Candidate final learners for the hybrid's refit step, as (label . learner-args).
+The SCW parameters are (eta C); eta 0.9 is what cl-online-learning's own examples use, and
+C sweeps the aggressiveness. NIL means the incumbent AROW at its default gamma.")
+
+(defun run-final-learner-comparison (dataset &key (lambda1-list '(10.0 30.0))
+                                                  (max-rounds 20) (seed 42))
+  "Compare candidate final learners on the unpruned forest and on FTRL-pruned ones.
+
+One pruning run per lambda1, every candidate measured on each resulting forest, so the
+comparison is within a forest rather than across independent builds."
+  (multiple-value-bind (datamatrix datamatrix-test train-target test-target)
+      (ecase dataset
+        (:letter (multiple-value-bind (dm tg) (cl-random-forest-test/fixture:letter-train)
+                   (multiple-value-bind (dmt tgt) (cl-random-forest-test/fixture:letter-test)
+                     (values dm dmt tg tgt))))
+        (:mnist (mnist-data)))
+    (format t "~&=== FINAL LEARNER COMPARISON ~A, seed ~D, epochs ~D ===~%"
+            dataset seed *epochs*)
+    (force-output)
+    (let ((rows '())
+          (baseline-leaves nil))
+      ;; Unpruned reference for every candidate.
+      (let ((forest (build-seeded-forest dataset datamatrix train-target seed)))
+        (setf baseline-leaves (leaf-count forest))
+        (dolist (candidate *final-learners*)
+          (let ((accuracy (train-plain-final forest datamatrix datamatrix-test
+                                             train-target test-target (cdr candidate))))
+            (push (list :lambda1 nil :learner (car candidate)
+                        :leaves baseline-leaves :accuracy accuracy)
+                  rows)
+            (format t "~&UNPRUNED ~A ~,2F at ~D leaves~%"
+                    (car candidate) accuracy baseline-leaves)
+            (force-output))))
+      ;; One pruning run per lambda1, then every candidate on the result.
+      (dolist (lambda1 lambda1-list)
+        (let ((forest (build-seeded-forest dataset datamatrix train-target seed)))
+          (format t "~&--- pruning at lambda1 ~,1F ---~%" lambda1)
+          (force-output)
+          (run-iterated-pruning forest datamatrix datamatrix-test train-target test-target
+                                :lambda1 lambda1 :max-rounds max-rounds)
+          (let ((leaves (leaf-count forest)))
+            (dolist (candidate *final-learners*)
+              (let ((accuracy (train-plain-final forest datamatrix datamatrix-test
+                                                 train-target test-target (cdr candidate))))
+                (push (list :lambda1 lambda1 :learner (car candidate)
+                            :leaves leaves :accuracy accuracy)
+                      rows)
+                (format t "~&PRUNED lambda1 ~,1F ~A ~,2F at ~D leaves (~,1F%)~%"
+                        lambda1 (car candidate) accuracy leaves
+                        (* 100.0 (/ (float leaves) baseline-leaves)))
+                (force-output))))))
+      (setf rows (nreverse rows))
+      (format t "~&~%| lambda1 | leaves | ~{~A | ~}~%"
+              (mapcar (lambda (c) (string-downcase (symbol-name (car c)))) *final-learners*))
+      (format t "|---|---|~{~A~}~%" (mapcar (constantly "---|") *final-learners*))
+      (dolist (lambda1 (cons nil lambda1-list))
+        (let ((group (remove-if-not (lambda (row) (eql (getf row :lambda1) lambda1)) rows)))
+          (when group
+            (format t "| ~@[~,1F~]~:[unpruned~;~] | ~D | ~{~,2F | ~}~%"
+                    lambda1 lambda1 (getf (car group) :leaves)
+                    (mapcar (lambda (row) (getf row :accuracy)) group)))))
+      (format t "~&FINAL_LEARNER_DONE~%")
+      (force-output)
+      rows)))
+
+;;;; lambda1 sweep and final-learner choice: measurements
+;;;;
+;;;; letter, seed 42, *EPOCHS* 20, one bit-identical forest for every row.
+;;;; Read every difference below against the test set size: letter's is 5000, so 0.02
+;;;; accuracy points is one test sample.
+;;;;
+;;;; 1. Is lambda1 a size dial, or a pruning rate wearing a hat?
+;;;; ----------------------------------------------------------
+;;;; RUN-LAMBDA1-SWEEP, whole hybrid pipeline per lambda1. Baseline: AROW unpruned 97.14
+;;;; at 160733 leaves.
+;;;;
+;;;; | lambda1 | rounds | leaves | % of original | FTRL own | AROW refit | vs baseline |
+;;;; |---|---|---|---|---|---|---|
+;;;; |   0.0 |  1 | 160733 | 100.0% | 96.90 | 97.14 |  0.00 |
+;;;; |   1.0 |  8 | 155013 |  96.4% | 97.02 | 97.14 |  0.00 |
+;;;; |   3.0 | 12 | 139097 |  86.5% | 96.80 | 97.20 | +0.06 |
+;;;; |  10.0 | 14 | 113007 |  70.3% | 96.82 | 97.18 | +0.04 |
+;;;; |  30.0 | 20 |  81777 |  50.9% | 96.66 | 97.24 | +0.10 |
+;;;; | 100.0 | 21 |  45780 |  28.5% | 96.02 | 97.00 | -0.14 |
+;;;;
+;;;; It is a dial: 100% down to 28.5%, a 3.5x range. So "no pruning rate to choose" is
+;;;; partly a rename -- how aggressively to prune is still chosen, just in another unit.
+;;;;
+;;;; What is not a rename is the accuracy column. Across that whole 3.5x range the refit
+;;;; accuracy moves 0.24 points total and sits at or above the unpruned baseline at five
+;;;; of six settings. Getting lambda1 wrong by a factor of ten (3 to 30) moves the size
+;;;; from 86.5% to 50.9% and the accuracy from 97.20 to 97.24 -- up, not down. A rate set
+;;;; too high is a mistake; a lambda1 set too high is a smaller forest.
+;;;;
+;;;; The best accuracy in the table is not the unpruned forest but lambda1 30 at half the
+;;;; leaves, which is the CVPR2015 global-pruning claim behaving as advertised: the pruning
+;;;; is acting as regularisation.
+;;;;
+;;;; lambda1 0.0 is the sanity anchor -- no L1, nothing ever mergeable, one round, zero
+;;;; deletions, and the refit reproduces the baseline exactly.
+;;;;
+;;;; Caveat: lambda1 100 did not converge, it hit MAX-ROUNDS 20 while still deleting 31
+;;;; leaf-parents in its last round, so 45780 is an upper bound on where it would stop.
+;;;; A larger lambda1 also delays learning (|z| must cross it before a weight leaves zero),
+;;;; so at 20 epochs its rounds are under-trained, which over-prunes and compounds. Its
+;;;; -0.14 is the one row that should not be read as converged.
+;;;;
+;;;; 2. Does the final learner matter? AROW against SCW
+;;;; --------------------------------------------------
+;;;; RUN-FINAL-LEARNER-COMPARISON. C first, at eta 0.9:
+;;;;
+;;;; | lambda1 | leaves | arow | scw C=0.1 | scw C=1.0 | scw C=10 |
+;;;; |---|---|---|---|---|---|
+;;;; | unpruned | 160733 | 97.14 | 97.08 | 97.08 | 97.08 |
+;;;; |     10.0 | 113007 | 97.18 | 97.12 | 97.12 | 97.12 |
+;;;; |     30.0 |  81777 | 97.24 | 97.18 | 97.18 | 97.18 |
+;;;;
+;;;; C over a 100x range changes nothing, and that is correct rather than a bug. C caps
+;;;; alpha in SPARSE-SCW-UPDATE, and cl-online-learning's 2026-08-02 fix (restoring
+;;;; Proposition 1's 1/(v zeta) factor) shrank the uncapped alpha by roughly v*zeta, so the
+;;;; cap no longer binds here. Before that fix it bound on 663 of a1a's 679 updates and was
+;;;; effectively setting a constant step size.
+;;;;
+;;;; eta, the knob that does bind, at C 1.0:
+;;;;
+;;;; | lambda1 | leaves | arow | eta .6 | eta .75 | eta .9 | eta .95 | eta .99 |
+;;;; |---|---|---|---|---|---|---|---|
+;;;; | unpruned | 160733 | 97.14 | 97.16 | 97.12 | 97.08 | 97.12 | 97.10 |
+;;;; |     30.0 |  81777 | 97.24 | 97.26 | 97.26 | 97.18 | 97.20 | 97.16 |
+;;;;
+;;;; eta 0.6-0.75 edges AROW out by 0.02, which is one test sample. The full spread across
+;;;; AROW and every SCW setting is 97.08 to 97.26, nine samples. There is no reason here to
+;;;; prefer either learner. Incidentally eta 0.9, the value cl-online-learning's own
+;;;; examples use, is the weakest of the SCW settings for this task.
+;;;;
+;;;; The one thing the sweep does establish is that the hybrid does not depend on which
+;;;; learner finishes it: every learner tested gains from the pruning rather than merely
+;;;; tolerating it (AROW 97.14 -> 97.24, SCW eta .6 97.16 -> 97.26, eta .9 97.08 -> 97.18,
+;;;; eta .99 97.10 -> 97.16). Halving the leaves is worth +0.06 to +0.10 whoever fits the
+;;;; model, which is the regularisation reading surviving a change of learner.
