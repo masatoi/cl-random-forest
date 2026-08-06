@@ -182,6 +182,25 @@ The following figure shows the accuracy for test dataset and the number of leaf 
 
 [[./docs/img/clrf-mnist-pruning.png]]
 
+**** Packed inference
+
+For serving a trained model, =cl-random-forest/src/packed= flattens a forest into arrays:
+5-8x faster than =predict-forest=, safe to call from several threads, and serialisable.
+
+#+BEGIN_SRC lisp
+(ql:quickload :cl-random-forest/src/packed)
+
+(defparameter *packed* (clrf.packed:build-packed-classifier *forest*))
+(defparameter *acc* (clrf.packed:make-packed-accumulator *packed*))
+
+(clrf.packed:packed-predict *packed* *datamatrix* 0 *acc*)
+
+(clrf.packed:packed-save *packed* #p"model.packed")
+(defparameter *reloaded* (clrf.packed:packed-load #p"model.packed"))
+#+END_SRC
+
+One accumulator per thread. The packed model is a snapshot of the forest at build time.
+
 **** Parallelization
 The following several functions can be parallelized with [[https://lparallel.org/][lparallel]].
 
