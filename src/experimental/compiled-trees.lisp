@@ -1902,3 +1902,222 @@ Returns (values class-differing distribution-differing worst-absolute-difference
 ;;;; between them on n-class and the measured mean non-zero count, as the review suggested,
 ;;;; is the right shape -- but it should choose on the dense row's size rather than on the
 ;;;; compression ratio, which is what would have picked wrong here.
+
+;;;; Parallel scaling of the separated representations
+;;;;
+;;;; The array layout reached 3.7-4.9x on eight threads and the guess was that its working
+;;;; set -- data every core contends for -- was the limit. Packing cut the node arrays to a
+;;;; third, so if that guess was right the scaling should improve. Measured rather than
+;;;; assumed, since the last two guesses about this were wrong.
+
+(defun run-packed-parallel-scaling (&key (dataset :letter) (n-tree 500) (max-depth 10)
+                                         (worker-counts '(1 2 4 8)))
+  "Scaling of dense and CSR payloads over a shared topology, with the old layouts alongside."
+  (multiple-value-bind (datamatrix datamatrix-test target n-class n-trial)
+      (dataset-parts dataset)
+    (let* ((forest (make-forest n-class datamatrix target
+                                :n-tree n-tree :bagging-ratio 0.1 :max-depth max-depth
+                                :n-trial n-trial :min-region-samples 5
+                                :remove-sample-indices? nil))
+           (topology (build-packed-topology forest))
+           (dense (build-dense-classifier forest topology))
+           (csr (build-csr-classifier forest topology))
+           (old (build-packed-forest forest))
+           (n-rows (array-dimension datamatrix-test 0)))
+      (format t "~&=== packed parallel scaling on ~A, ~Dx d=~D ===~%" dataset n-tree max-depth)
+      (format t "~&| workers | dense pred/s | csr pred/s | packed-forest pred/s |~%")
+      (format t "|---|---|---|---|~%")
+      (force-output)
+      (flet ((rate (predict-fn)
+               (lambda (w)
+                 (time-parallel
+                  (lambda (start end)
+                    (let ((acc (make-array n-class :element-type 'single-float
+                                                   :initial-element 0.0))
+                          (sum 0))
+                      (loop for i from start below end
+                            do (incf sum (funcall predict-fn datamatrix-test i acc)))
+                      sum))
+                  n-rows w))))
+        (let ((dense-rate (rate (lambda (d i acc) (predict-dense dense d i acc))))
+              (csr-rate (rate (lambda (d i acc) (predict-csr csr d i acc))))
+              (old-rate (rate (lambda (d i acc) (predict-packed-forest old d i acc)))))
+          (dolist (w worker-counts)
+            (format t "| ~D | ~,0F | ~,0F | ~,0F |~%"
+                    w (funcall dense-rate w) (funcall csr-rate w) (funcall old-rate w))
+            (force-output))))
+      (format t "~&PACKED_PARALLEL_DONE~%")
+      (force-output))))
+
+;;;; Batch prediction: datum-major against tree-major
+;;;;
+;;;; Everything so far predicts one datum at a time, which walks all N trees per datum --
+;;;; so each tree's node arrays are revisited once per datum and nothing stays hot. The
+;;;; other order is to take a tile of data and push it through one tree before moving to
+;;;; the next, so a tree's nodes are touched once per tile.
+;;;;
+;;;; The cost is memory: accumulating across trees means one accumulator per datum in the
+;;;; tile, tile x n-class floats, live for the whole tile. That is the trade -- locality
+;;;; over working set -- and which way it goes depends on whether a tree's nodes are
+;;;; smaller than the tile's accumulators.
+
+(defun predict-dense-tile-datum-major (classifier datamatrix start end acc out)
+  "Predict rows [START,END) a datum at a time. OUT is indexed from 0."
+  (declare (optimize (speed 3) (safety 0))
+           (type (simple-array single-float (*)) acc)
+           (type (simple-array fixnum (*)) out)
+           (type fixnum start end))
+  (loop for i of-type fixnum from start below end
+        do (setf (aref out (- i start))
+                 (predict-dense classifier datamatrix i acc))))
+
+(defun predict-dense-tile-tree-major (classifier datamatrix start end accs out)
+  "Predict rows [START,END) a tree at a time, accumulating into per-datum rows of ACCS.
+
+ACCS is (tile x n-class). A tree's feature, threshold and child arrays are walked for every
+datum in the tile before the next tree is touched."
+  (declare (optimize (speed 3) (safety 0))
+           (type dense-classifier classifier)
+           (type (simple-array single-float (* *)) datamatrix accs)
+           (type (simple-array fixnum (*)) out)
+           (type fixnum start end))
+  (let* ((topology (dense-classifier-topology classifier))
+         (table (dense-classifier-table classifier))
+         (n-class (dense-classifier-n-class classifier))
+         (roots (packed-topology-roots topology))
+         (n-tree (packed-topology-n-tree topology))
+         (tile (- end start)))
+    (declare (type (simple-array single-float (* *)) table)
+             (type (simple-array (signed-byte 32) (*)) roots)
+             (type fixnum n-class n-tree tile))
+    (dotimes (r tile)
+      (dotimes (k n-class) (setf (aref accs r k) 0.0)))
+    (dotimes (tree n-tree)
+      (let ((root (aref roots tree)))
+        (dotimes (r tile)
+          (let ((row (topology-leaf topology datamatrix (+ start r) root)))
+            (declare (type fixnum row))
+            (dotimes (k n-class)
+              (incf (aref accs r k) (aref table row k)))))))
+    (dotimes (r tile)
+      (let ((best most-negative-single-float)
+            (best-k 0))
+        (declare (type single-float best) (type fixnum best-k))
+        (dotimes (k n-class)
+          (let ((v (/ (aref accs r k) n-tree)))
+            (when (> v best) (setf best v best-k k))))
+        (setf (aref out r) best-k)))))
+
+(defun time-batch (fn n-rows tile &key (minimum-seconds 0.5d0))
+  "Predictions per second for FN, which takes (start end) and predicts that tile."
+  (let ((passes 0)
+        (start-time (get-internal-real-time))
+        (elapsed 0d0))
+    (loop
+      (let ((i 0))
+        (loop while (< i n-rows)
+              do (let ((end (min n-rows (+ i tile))))
+                   (funcall fn i end)
+                   (setf i end))))
+      (incf passes)
+      (setf elapsed (/ (float (- (get-internal-real-time) start-time) 1.0d0)
+                       internal-time-units-per-second))
+      (when (>= elapsed minimum-seconds) (return)))
+    (/ (* n-rows passes) elapsed)))
+
+(defun compare-batch-orders (n-class datamatrix target datamatrix-test n-tree max-depth
+                             n-trial tiles)
+  "One forest: datum-major against tree-major at several tile sizes, and agreement."
+  (let* ((forest (make-forest n-class datamatrix target
+                              :n-tree n-tree :bagging-ratio 0.1 :max-depth max-depth
+                              :n-trial n-trial :min-region-samples 5
+                              :remove-sample-indices? nil))
+         (dense (build-dense-classifier forest))
+         (n-rows (array-dimension datamatrix-test 0)))
+    ;; Agreement first: tree-major must give exactly what the library gives.
+    (let* ((tile (min 256 n-rows))
+           (accs (make-array (list tile n-class) :element-type 'single-float))
+           (out (make-array tile :element-type 'fixnum))
+           (bad 0))
+      (let ((i 0))
+        (loop while (< i n-rows)
+              do (let ((end (min n-rows (+ i tile))))
+                   (predict-dense-tile-tree-major dense datamatrix-test i end accs out)
+                   (loop for j from i below end
+                         do (unless (= (aref out (- j i))
+                                       (predict-forest forest datamatrix-test j))
+                              (incf bad)))
+                   (setf i end))))
+      (format t "~&| ~Dx d=~D | tree-major disagreements ~D of ~D |~%"
+              n-tree max-depth bad n-rows))
+    (dolist (tile tiles)
+      (let* ((tile (min tile n-rows))
+             (acc (make-array n-class :element-type 'single-float :initial-element 0.0))
+             (accs (make-array (list tile n-class) :element-type 'single-float))
+             (out (make-array tile :element-type 'fixnum))
+             (datum-rate (time-batch (lambda (s e)
+                                       (predict-dense-tile-datum-major dense datamatrix-test
+                                                                       s e acc out))
+                                     n-rows tile))
+             (tree-rate (time-batch (lambda (s e)
+                                      (predict-dense-tile-tree-major dense datamatrix-test
+                                                                     s e accs out))
+                                    n-rows tile)))
+        (format t "~&| tile ~D | ~,0F datum-major | ~,0F tree-major | ~,2Fx | accs ~,2F MB |~%"
+                tile datum-rate tree-rate (/ tree-rate datum-rate)
+                (/ (* tile n-class 4) 1048576.0))
+        (force-output)))))
+
+(defun run-batch-comparison (&key (dataset :letter) (n-tree 500) (max-depth 10)
+                                  (tiles '(1 32 256 5000)))
+  (multiple-value-bind (datamatrix datamatrix-test target n-class n-trial)
+      (dataset-parts dataset)
+    (format t "~&=== batch order on ~A, ~Dx d=~D ===~%" dataset n-tree max-depth)
+    (force-output)
+    (compare-batch-orders n-class datamatrix target datamatrix-test
+                          n-tree max-depth n-trial tiles)
+    (format t "~&BATCH_DONE~%")
+    (force-output)))
+
+;;;; Parallel scaling and batch order, measured
+;;;;
+;;;; 500-tree depth-10 forests, one accumulator per thread.
+;;;;
+;;;; | workers | letter dense | letter csr | MNIST dense | MNIST csr |
+;;;; |---|---|---|---|---|
+;;;; | 1 |  15577 |  24001 | 18554 | 16557 |
+;;;; | 2 |  35028 |  47895 | 38988 | 34015 |
+;;;; | 4 |  64460 |  90914 | 71052 | 66339 |
+;;;; | 8 | 124290 | 153855 | 91079 | 83199 |
+;;;;
+;;;; letter reaches 8.0x on eight threads for dense and 6.4x for CSR, against the array
+;;;; layout's 4.9x measured earlier -- so the guess that its working set was the limit was
+;;;; right, and cutting the node arrays to a third fixed it. MNIST does not: 4.9x for
+;;;; dense, and the curve flattens between four and eight threads (71052 to 91079) where
+;;;; letter's is still nearly linear. MNIST's topology is 4.0 MB against letter's 1.7, and
+;;;; its leaf table 9.9 against 11.3 -- so the working set that still does not fit is the
+;;;; one CSR shrank on letter and could not on MNIST.
+;;;;
+;;;; Batch order, dense payload, tree-major against datum-major:
+;;;;
+;;;; | tile | letter datum | letter tree | ratio | MNIST datum | MNIST tree | ratio |
+;;;; |---|---|---|---|---|---|---|
+;;;; | 1     | 15106 | 13388 | 0.89x | 18798 | 14948 | 0.80x |
+;;;; | 32    | 15315 | 18316 | 1.20x | 18869 | 23867 | 1.26x |
+;;;; | 256   | 15106 | 29184 | 1.93x | 18869 | 32950 | 1.75x |
+;;;; | whole | 15198 | 35463 | 2.33x | 18869 | 18976 | 1.01x |
+;;;;
+;;;; Tree-major agrees exactly with PREDICT-FOREST at every tile: 0 of 5000 and 0 of 10000.
+;;;;
+;;;; A tile of one is tree-major at its worst -- all of the accumulator handling, none of
+;;;; the reuse -- and it duly loses. From 32 up it wins, because a tree's node arrays are
+;;;; walked once per tile instead of once per datum. letter keeps improving to the whole
+;;;; test set, 2.33x. MNIST peaks at 256 and then collapses back to parity: 10000 x 10
+;;;; accumulators is 0.38 MB being swept once per tree, 500 times, and past some tile size
+;;;; that costs more than the tree reuse saves. letter's 5000 x 26 is 0.50 MB and does not
+;;;; hit it, which says the limit is not accumulator size alone but its size against the
+;;;; tree being reused.
+;;;;
+;;;; Tiling is the largest single-thread gain left in this file, and it composes with the
+;;;; parallel result rather than competing: chunks are already per-thread, so a chunk is a
+;;;; tile. Combining them was not measured.
