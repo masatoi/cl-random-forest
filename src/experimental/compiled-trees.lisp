@@ -149,16 +149,21 @@ allocates nothing -- the same reason FOREST has a CLASS-COUNT-ARRAY."
      :scratch (make-array (forest-n-class forest)
                           :element-type 'single-float :initial-element 0.0))))
 
-(defun predict-compiled-forest (compiled-forest datamatrix datum-index)
-  "PREDICT-FOREST's answer, computed from precompiled trees and cached leaf distributions."
+(defun predict-compiled-forest (compiled-forest datamatrix datum-index
+                                &optional (acc (compiled-forest-scratch compiled-forest)))
+  "PREDICT-FOREST's answer, computed from precompiled trees and cached leaf distributions.
+
+ACC is the accumulator to sum into. It defaults to a buffer on the struct, which is
+convenient and single-threaded only: two threads predicting from one COMPILED-FOREST would
+share it and corrupt each other, exactly as PREDICT-FOREST does with
+FOREST-CLASS-COUNT-ARRAY. Pass a per-thread accumulator to predict in parallel."
   (declare (optimize (speed 3) (safety 0))
            (type (simple-array single-float (* *)) datamatrix)
            (type fixnum datum-index))
   (let ((n-class (compiled-forest-n-class compiled-forest))
         (n-tree (compiled-forest-n-tree compiled-forest))
         (predictors (compiled-forest-predictors compiled-forest))
-        (distributions (compiled-forest-distributions compiled-forest))
-        (acc (compiled-forest-scratch compiled-forest)))
+        (distributions (compiled-forest-distributions compiled-forest)))
     (declare (type fixnum n-class n-tree)
              (type simple-vector predictors distributions)
              (type (simple-array single-float (*)) acc))
@@ -565,3 +570,377 @@ much of the compiled forest's time is spent anywhere other than in those trees."
 ;;;; (The sketch also sized its vote counter by (array-dimension datamatrix 1) -- the
 ;;;; feature count, 784 -- rather than the class count, which is harmless only because 784
 ;;;; happens to exceed 10.)
+
+;;;; A third representation: the tree as data
+;;;;
+;;;; The decomposition above says the compiled forest's problem is that 500 separate code
+;;;; blobs are touched once each per prediction. The way out is to stop generating code and
+;;;; start generating data: lay every node of every tree into flat arrays and walk them with
+;;;; one small loop. The loop stays in the instruction cache no matter how large the forest
+;;;; gets, and the nodes become contiguous instead of a pointer chase through separate heap
+;;;; objects.
+;;;;
+;;;; It keeps the thing that made compiling fast in the first place -- the leaf value is
+;;;; computed once at build time instead of recounted from SAMPLE-INDICES on every
+;;;; prediction -- and gives up the thing that made it fast at the margin, thresholds as
+;;;; immediates in straight-line branches.
+;;;;
+;;;; The node struct here is a DEFSTRUCT, not a CLOS class, so there is no dispatch to
+;;;; remove; the gain is layout, not dispatch.
+;;;;
+;;;; All the arrays are read-only after building, and prediction writes only the
+;;;; accumulator the caller supplies. That makes this the only one of the three
+;;;; representations that is reentrant, which the parallel section below leans on.
+
+(defstruct (array-forest (:constructor %make-array-forest))
+  "Every node of every tree of a forest, flattened into parallel arrays.
+
+FEATURE, THRESHOLD, LEFT, RIGHT and LEAF-P are indexed by a global node number; ROOTS holds
+each tree's. LEFT does double duty: on an internal node it is the child to take when the
+test passes, and on a leaf it is the row of DISTRIBUTIONS holding that leaf's class
+distribution. Both branches of the walk therefore read the same array, and a leaf needs no
+array of its own."
+  n-class n-tree n-node feature threshold left right leaf-p roots distributions)
+
+(defun build-array-forest (forest &key (leaf-payload :distribution))
+  "Flatten FOREST into arrays.
+
+LEAF-PAYLOAD :distribution stores each leaf's class distribution, which is what a forest
+has to sum. :class stores the leaf's argmax instead, which is what PREDICT-DTREE returns
+and what a single tree can therefore answer without any summing."
+  (let ((feature (make-array 64 :element-type 'fixnum :adjustable t :fill-pointer 0))
+        (threshold (make-array 64 :element-type 'single-float :adjustable t :fill-pointer 0))
+        (left (make-array 64 :element-type 'fixnum :adjustable t :fill-pointer 0))
+        (right (make-array 64 :element-type 'fixnum :adjustable t :fill-pointer 0))
+        (leaf-p (make-array 64 :element-type 'bit :adjustable t :fill-pointer 0))
+        (distributions '())
+        (n-leaf 0)
+        (roots '())
+        (n-class (forest-n-class forest)))
+    (labels ((emit (node)
+               ;; Reserve this node's slot before recursing, so a child's index is always
+               ;; greater than its parent's and the arrays can be filled in one pass.
+               (let ((self (fill-pointer feature)))
+                 (vector-push-extend 0 feature)
+                 (vector-push-extend 0.0 threshold)
+                 (vector-push-extend 0 left)
+                 (vector-push-extend 0 right)
+                 (vector-push-extend 0 leaf-p)
+                 (if (node-test-attribute node)
+                     (let ((l (emit (node-left-node node)))
+                           (r (emit (node-right-node node))))
+                       (setf (aref feature self) (node-test-attribute node)
+                             (aref threshold self) (node-test-threshold node)
+                             (aref left self) l
+                             (aref right self) r))
+                     (progn
+                       (setf (aref leaf-p self) 1
+                             (aref left self) (ecase leaf-payload
+                                                (:distribution n-leaf)
+                                                (:class (leaf-class node))))
+                       (when (eq leaf-payload :distribution)
+                         (push (leaf-distribution node) distributions))
+                       (incf n-leaf)))
+                 self)))
+      (dolist (dtree (forest-dtree-list forest))
+        (push (emit (dtree-root dtree)) roots)))
+    (let ((n-node (fill-pointer feature))
+          (table (make-array (list (max n-leaf 1) n-class)
+                             :element-type 'single-float :initial-element 0.0)))
+      (when (eq leaf-payload :distribution)
+        (loop for dist in (nreverse distributions)
+              for row from 0
+              do (dotimes (k n-class)
+                   (setf (aref table row k) (aref dist k)))))
+      (%make-array-forest
+       :n-class n-class
+       :n-tree (forest-n-tree forest)
+       :n-node n-node
+       :feature (coerce feature '(simple-array fixnum (*)))
+       :threshold (coerce threshold '(simple-array single-float (*)))
+       :left (coerce left '(simple-array fixnum (*)))
+       :right (coerce right '(simple-array fixnum (*)))
+       :leaf-p (coerce leaf-p 'simple-bit-vector)
+       :roots (coerce (nreverse roots) '(simple-array fixnum (*)))
+       :distributions table))))
+
+(defun make-accumulator (array-forest)
+  "A fresh accumulator for PREDICT-ARRAY-FOREST. One per thread."
+  (make-array (array-forest-n-class array-forest)
+              :element-type 'single-float :initial-element 0.0))
+
+(defun predict-array-forest (array-forest datamatrix datum-index acc)
+  "PREDICT-FOREST's answer, walking the flattened arrays. Writes only ACC."
+  (declare (optimize (speed 3) (safety 0))
+           (type array-forest array-forest)
+           (type (simple-array single-float (* *)) datamatrix)
+           (type (simple-array single-float (*)) acc)
+           (type fixnum datum-index))
+  (let ((feature (array-forest-feature array-forest))
+        (threshold (array-forest-threshold array-forest))
+        (left (array-forest-left array-forest))
+        (right (array-forest-right array-forest))
+        (leaf-p (array-forest-leaf-p array-forest))
+        (roots (array-forest-roots array-forest))
+        (table (array-forest-distributions array-forest))
+        (n-class (array-forest-n-class array-forest))
+        (n-tree (array-forest-n-tree array-forest)))
+    (declare (type (simple-array fixnum (*)) feature left right roots)
+             (type (simple-array single-float (*)) threshold)
+             (type simple-bit-vector leaf-p)
+             (type (simple-array single-float (* *)) table)
+             (type fixnum n-class n-tree))
+    (dotimes (k n-class) (setf (aref acc k) 0.0))
+    (dotimes (tree n-tree)
+      (let ((node (aref roots tree)))
+        (declare (type fixnum node))
+        (loop
+          (when (= 1 (sbit leaf-p node))
+            (let ((row (aref left node)))
+              (declare (type fixnum row))
+              (dotimes (k n-class)
+                (incf (aref acc k) (aref table row k))))
+            (return))
+          (setf node (if (>= (aref datamatrix datum-index (aref feature node))
+                             (aref threshold node))
+                         (aref left node)
+                         (aref right node))))))
+    (dotimes (k n-class)
+      (setf (aref acc k) (/ (aref acc k) n-tree)))
+    (argmax acc)))
+
+(defun predict-array-tree (array-forest datamatrix datum-index)
+  "The class a :class-payload single-tree ARRAY-FOREST gives, with no summing at all."
+  (declare (optimize (speed 3) (safety 0))
+           (type array-forest array-forest)
+           (type (simple-array single-float (* *)) datamatrix)
+           (type fixnum datum-index))
+  (let ((feature (array-forest-feature array-forest))
+        (threshold (array-forest-threshold array-forest))
+        (left (array-forest-left array-forest))
+        (right (array-forest-right array-forest))
+        (leaf-p (array-forest-leaf-p array-forest))
+        (node (aref (array-forest-roots array-forest) 0)))
+    (declare (type (simple-array fixnum (*)) feature left right)
+             (type (simple-array single-float (*)) threshold)
+             (type simple-bit-vector leaf-p)
+             (type fixnum node))
+    (loop
+      (when (= 1 (sbit leaf-p node))
+        (return (aref left node)))
+      (setf node (if (>= (aref datamatrix datum-index (aref feature node))
+                         (aref threshold node))
+                     (aref left node)
+                     (aref right node))))))
+
+(defun count-array-forest-disagreements (forest array-forest datamatrix)
+  "How many rows PREDICT-FOREST and PREDICT-ARRAY-FOREST answer differently."
+  (let ((acc (make-accumulator array-forest))
+        (bad 0))
+    (dotimes (i (array-dimension datamatrix 0) bad)
+      (unless (= (predict-forest forest datamatrix i)
+                 (predict-array-forest array-forest datamatrix i acc))
+        (incf bad)))))
+
+;;;; Three representations, side by side
+
+(defun benchmark-three-ways (n-class datamatrix target datamatrix-test n-tree max-depth
+                             n-trial)
+  "Build a forest once and measure walking, compiled and array prediction on it."
+  (let ((forest (make-forest n-class datamatrix target
+                             :n-tree n-tree :bagging-ratio 0.1
+                             :max-depth max-depth :n-trial n-trial :min-region-samples 5)))
+    (multiple-value-bind (compiled compile-seconds) (seconds (compile-forest forest))
+      (multiple-value-bind (arrayed build-seconds) (seconds (build-array-forest forest))
+        (let ((acc (make-accumulator arrayed)))
+          (format t "~&| forest ~Dx d=~D | ~D nodes | ~,2F s compile | ~,3F s build | ~
+~D / ~D disagreements | ~,0F walk | ~,0F compiled | ~,0F array |~%"
+                  n-tree max-depth (array-forest-n-node arrayed)
+                  compile-seconds build-seconds
+                  (count-forest-disagreements forest compiled datamatrix-test)
+                  (count-array-forest-disagreements forest arrayed datamatrix-test)
+                  (time-predictions (lambda (d i) (predict-forest forest d i))
+                                    datamatrix-test)
+                  (time-predictions (lambda (d i) (predict-compiled-forest compiled d i))
+                                    datamatrix-test)
+                  (time-predictions (lambda (d i) (predict-array-forest arrayed d i acc))
+                                    datamatrix-test))
+          (force-output)
+          (values forest compiled arrayed))))))
+
+(defun run-three-ways (&key (dataset :letter) (configs '((500 5) (500 10))))
+  (multiple-value-bind (datamatrix datamatrix-test target n-class n-trial)
+      (dataset-parts dataset)
+    (format t "~&=== three representations on ~A ===~%" dataset)
+    (force-output)
+    (dolist (config configs)
+      (benchmark-three-ways n-class datamatrix target datamatrix-test
+                            (first config) (second config) n-trial))
+    (format t "~&THREE_WAYS_DONE~%")
+    (force-output)))
+
+;;;; Parallel prediction
+;;;;
+;;;; PREDICT-FOREST accumulates into FOREST-CLASS-COUNT-ARRAY and every leaf read
+;;;; overwrites DTREE-CLASS-COUNT-ARRAY, both of them slots on the shared model, so two
+;;;; threads predicting from one forest write over each other. That is not a race that
+;;;; merely slows things down; it changes answers. COUNT-PARALLEL-CORRUPTIONS measures how
+;;;; many, rather than asserting it.
+
+(defun chunk-bounds (n-rows n-workers)
+  "N-WORKERS (start . end) pairs covering N-ROWS."
+  (loop for w from 0 below n-workers
+        collect (cons (floor (* w n-rows) n-workers)
+                      (floor (* (1+ w) n-rows) n-workers))))
+
+(defun time-parallel (chunk-fn n-rows n-workers &key (minimum-seconds 0.5d0))
+  "Predictions per second when CHUNK-FN is run over N-WORKERS chunks in parallel.
+
+CHUNK-FN takes (start end) and returns a checksum. A kernel of N-WORKERS is created and
+shut down around the measurement."
+  (let ((bounds (chunk-bounds n-rows n-workers))
+        (lparallel:*kernel* (lparallel:make-kernel n-workers)))
+    (unwind-protect
+         (let ((passes 0)
+               (checksum 0)
+               (start (get-internal-real-time))
+               (elapsed 0d0))
+           (loop
+             (incf checksum
+                   (reduce #'+ (lparallel:pmapcar
+                                (lambda (b) (funcall chunk-fn (car b) (cdr b)))
+                                bounds)))
+             (incf passes)
+             (setf elapsed (/ (float (- (get-internal-real-time) start) 1.0d0)
+                              internal-time-units-per-second))
+             (when (>= elapsed minimum-seconds) (return)))
+           (values (/ (* n-rows passes) elapsed) checksum))
+      (lparallel:end-kernel :wait t))))
+
+(defun count-parallel-corruptions (forest datamatrix n-workers)
+  "How many answers PREDICT-FOREST gets wrong when N-WORKERS threads share one forest.
+
+Serial answers first, then the same rows through a kernel, then compare."
+  (let* ((n (array-dimension datamatrix 0))
+         (serial (make-array n :element-type 'fixnum)))
+    (dotimes (i n) (setf (aref serial i) (predict-forest forest datamatrix i)))
+    (let ((parallel (make-array n :element-type 'fixnum :initial-element -1))
+          (lparallel:*kernel* (lparallel:make-kernel n-workers)))
+      (unwind-protect
+           (lparallel:pmapc
+            (lambda (b)
+              (loop for i from (car b) below (cdr b)
+                    do (setf (aref parallel i) (predict-forest forest datamatrix i))))
+            (chunk-bounds n n-workers))
+        (lparallel:end-kernel :wait t))
+      (let ((bad 0))
+        (dotimes (i n bad)
+          (unless (= (aref serial i) (aref parallel i)) (incf bad)))))))
+
+(defun run-parallel-scaling (&key (dataset :letter) (n-tree 500) (max-depth 10)
+                                  (worker-counts '(1 2 4 8)))
+  "Scaling of the compiled and array representations, and what happens to the walking one."
+  (multiple-value-bind (datamatrix datamatrix-test target n-class n-trial)
+      (dataset-parts dataset)
+    (let* ((forest (make-forest n-class datamatrix target
+                                :n-tree n-tree :bagging-ratio 0.1
+                                :max-depth max-depth :n-trial n-trial
+                                :min-region-samples 5))
+           (compiled (compile-forest forest))
+           (arrayed (build-array-forest forest))
+           (n-rows (array-dimension datamatrix-test 0)))
+      (format t "~&=== parallel scaling on ~A, ~Dx d=~D ===~%" dataset n-tree max-depth)
+      (format t "~&| workers | compiled pred/s | array pred/s | walking: wrong answers |~%")
+      (format t "|---|---|---|---|~%")
+      (force-output)
+      (dolist (w worker-counts)
+        (let ((compiled-rate
+                (time-parallel (lambda (start end)
+                                 ;; One accumulator per chunk, so threads share nothing.
+                                 (let ((acc (make-accumulator arrayed))
+                                       (sum 0))
+                                   (loop for i from start below end
+                                         do (incf sum (predict-compiled-forest
+                                                       compiled datamatrix-test i acc)))
+                                   sum))
+                               n-rows w))
+              (array-rate
+                (time-parallel (lambda (start end)
+                                 (let ((acc (make-accumulator arrayed))
+                                       (sum 0))
+                                   (loop for i from start below end
+                                         do (incf sum (predict-array-forest
+                                                       arrayed datamatrix-test i acc)))
+                                   sum))
+                               n-rows w))
+              (corruptions (if (= w 1)
+                               0
+                               (count-parallel-corruptions forest datamatrix-test w))))
+          (format t "| ~D | ~,0F | ~,0F | ~D of ~D |~%"
+                  w compiled-rate array-rate corruptions n-rows)
+          (force-output)))
+      (format t "~&PARALLEL_DONE~%")
+      (force-output))))
+
+;;;; Three representations and parallel scaling, measured
+;;;;
+;;;; 500-tree forests, one run each. Rates are predictions per second.
+;;;;
+;;;; | | nodes | compile s | build s | disagreements | walk | compiled | array |
+;;;; |---|---|---|---|---|---|---|---|
+;;;; | letter d=5  |  29602 |  2.31 | 0.003 | 0 / 0 | 7205 | 53956 | 40716 |
+;;;; | letter d=10 | 227594 | 16.22 | 0.020 | 0 / 0 | 3272 | 13227 |  8756 |
+;;;; | MNIST d=5   |  31470 |  1.95 | 0.005 | 0 / 0 | 2834 | 63091 | 55658 |
+;;;; | MNIST d=10  | 519302 | 47.86 | 0.035 | 0 / 0 | 2336 | 10638 |  8354 |
+;;;;
+;;;; Both new representations agree exactly with PREDICT-FOREST everywhere.
+;;;;
+;;;; Two predictions made before measuring were wrong, and it is worth saying which.
+;;;;
+;;;; The first was that flattening to arrays would overtake compiling on large forests,
+;;;; because the instruction-cache penalty the decomposition found grows with code size.
+;;;; It does grow -- but compiled still wins at every size here, by 1.1x to 1.5x, even at
+;;;; 519302 nodes. Straight-line branches on immediate thresholds beat a loop doing four
+;;;; or five array loads per node, and the i-cache penalty is not enough to close that.
+;;;;
+;;;; What arrays win instead is build time: 0.035 s against 47.86 s, a factor of 1368. For
+;;;; a model built once and served forever that is irrelevant. For the iterated pruning in
+;;;; src/experimental/fused-sibling-refinement.lisp, which rebuilds the forest 16 to 19
+;;;; times, recompiling would cost a quarter of an hour of pure compilation and rebuilding
+;;;; arrays costs under a second in total. That is the difference that decides which one is
+;;;; usable there.
+;;;;
+;;;; Parallel scaling, 500 trees at depth 10, one accumulator per thread:
+;;;;
+;;;; | workers | letter compiled | letter array | MNIST compiled | MNIST array |
+;;;; |---|---|---|---|---|
+;;;; | 1 |  15923 | 12285 | 10236 | 12166 |
+;;;; | 2 |  29411 | 18797 | 21552 | 18215 |
+;;;; | 4 |  54053 | 38535 | 44053 | 35651 |
+;;;; | 8 | 102995 | 59641 | 79619 | 45113 |
+;;;;
+;;;; The second wrong prediction: arrays would scale better, being compact read-only data
+;;;; where compiled code thrashes the instruction cache. They scale worse -- 4.9x and 3.7x
+;;;; on eight threads against compiled's 6.5x and 7.8x. The array version's working set is
+;;;; data every core contends for in shared cache; the compiled version's is code, and each
+;;;; core has its own L1i and L2. The i-cache pressure that hurts a single thread is
+;;;; apparently cheaper to replicate per core than the array traffic is to share.
+;;;;
+;;;; Read the 1-worker column only against the rest of its own table: TIME-PARALLEL's chunk
+;;;; loops over a range directly where TIME-PREDICTIONS funcalls a closure per row, so its
+;;;; absolute numbers are not the three-way table's.
+;;;;
+;;;; And the walking representation, the same forest predicted from N threads:
+;;;;
+;;;; | workers | letter wrong answers | MNIST wrong answers |
+;;;; |---|---|---|
+;;;; | 2 | 2057 of 5000 | 3677 of 10000 |
+;;;; | 4 | 3141 of 5000 | 5762 of 10000 |
+;;;; | 8 | 3986 of 5000 | 6800 of 10000 |
+;;;;
+;;;; Up to 80% of predictions come back wrong. PREDICT-FOREST accumulates into
+;;;; FOREST-CLASS-COUNT-ARRAY and every leaf read overwrites DTREE-CLASS-COUNT-ARRAY, both
+;;;; slots on the shared model, so threads overwrite each other's partial sums. It does not
+;;;; signal, it does not slow down, it returns confident wrong answers. Prediction
+;;;; parallelism is not something these representations take away -- it is something the
+;;;; library does not have, and either of them is what makes it possible.
