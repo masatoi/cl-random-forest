@@ -35,7 +35,15 @@ In Lisp,
 
 #+BEGIN_SRC lisp
 (ql:quickload :cl-random-forest)
+
+;; The examples below are written from inside the package, whose nickname is CLRF.
+(in-package :cl-random-forest)
 #+END_SRC
+
+Two of the library's packages are deliberately not re-exported by that facade, so examples
+that need them qualify the symbol: =clrf.utils:= for the sampling helpers in
+=cl-random-forest/src/utils=, and =clrf.packed:= for the packed inference system, which is a
+separate system you also have to load.
 
 When using Roswell,
 
@@ -145,7 +153,16 @@ Then we train a linear classifier (AROW) using this new dataset and the original
 
 This TRAIN-REFINE-LEARNER function can be used to learn the dataset collectively, but it may be necessary to call this function several times until learning converges. TRAIN-REFINE-LEARNER-PROCESS function is used for training until converged.
 
+It stops when accuracy on a held-out development set stops improving, so it needs a second
+refine dataset and target alongside the training pair.
+
 #+BEGIN_SRC lisp
+;; Eleven data points cannot be split into train and dev, so this passes the training set
+;; twice. That makes the call runnable, not meaningful -- the convergence test it performs
+;; is only informative against data the learner is not being trained on.
+(defparameter *forest-refine-dev-dataset* *forest-refine-dataset*)
+(defparameter *dev-target* *target*)
+
 (train-refine-learner-process *forest-learner* *forest-refine-dataset* *target*
                               *forest-refine-dev-dataset* *dev-target*)
 #+END_SRC
@@ -238,26 +255,31 @@ To enable/disable parallelization, set lparallel's kernel object. For example, t
 **** Prepare training dataset
 In case of classification, the target is a vector of integer values, whereas in regression is a vector of continuous values.
 
+Every array the library takes is =single-float=, and CL's =pi= is a =double-float=, so the
+bounds have to be converted before they are used to fill one. RANDOM-UNIFORM and
+RANDOM-NORMAL come from =cl-random-forest/src/utils=, which the facade does not re-export.
+
 #+BEGIN_SRC lisp
 (defparameter *n* 100)
+(defparameter *pi* (float pi 1.0))
 
 (defparameter *datamatrix*
   (let ((arr (make-array (list *n* 1) :element-type 'single-float)))
     (loop for i from 0 below *n* do
-      (setf (aref arr i 0) (random-uniform (- pi) pi)))
+      (setf (aref arr i 0) (clrf.utils:random-uniform (- *pi*) *pi*)))
     arr))
 
 (defparameter *target*
   (let ((arr (make-array *n* :element-type 'single-float)))
     (loop for i from 0 below *n* do
       (setf (aref arr i) (+ (sin (aref *datamatrix* i 0))
-                            (random-normal :sd 0.1))))
+                            (clrf.utils:random-normal :sd 0.1))))
     arr))
 
 (defparameter *test*
   (let ((arr (make-array (list *n* 1) :element-type 'single-float)))
     (loop for i from 0 below *n*
-          for x from (- pi) to pi by (/ (* 2 pi) *n*)
+          for x from (- *pi*) to *pi* by (/ (* 2 *pi*) *n*)
           do (setf (aref arr i 0) x))
     arr))
 
