@@ -72,7 +72,13 @@ Load the feature system first (`ql:quickload` or `asdf:load-system`), then:
 ```
 
 There is no lint step. CI (`.github/workflows/ci.yml`) runs the matrix
-{sbcl-bin, ccl-bin} × {ubuntu-latest, macOS-latest}.
+{sbcl-bin, ccl-bin} × {ubuntu-latest, macOS-latest}, less ccl-bin on macOS, which the
+workflow excludes because macOS CCL binaries are no longer distributed — three jobs, not
+four. Roswell has no ccl-bin for **ARM64 Linux** either, so on an aarch64 development
+machine the CCL half of the matrix cannot be reproduced locally at all and CI is the only
+place it runs. Treat a green local suite as evidence about SBCL only: CCL does not check
+type declarations, and its `integer-decode-float` normalises a denormal's significand where
+SBCL leaves it alone — both have produced CI-only failures in this repository.
 
 Test/example caveats:
 - `cl-random-forest-test/regression`, `.../pruning`, and the seven synthetic tests in
