@@ -9,7 +9,8 @@
            #:single-float-to-bits
            #:bits-to-single-float
            #:%portable-single-float-to-bits
-           #:%portable-bits-to-single-float))
+           #:%portable-bits-to-single-float
+           #:%float-parts-to-bits))
 
 (in-package :cl-random-forest/src/packed/io)
 
@@ -31,23 +32,43 @@
 ;;;; portable version is the reference the tests hold the fast paths to, and the fallback
 ;;;; anywhere else.
 
+(defun %float-parts-to-bits (significand exponent sign)
+  "IEEE-754 single-precision bits of SIGNIFICAND * 2^EXPONENT, signed by SIGN.
+
+Separate from %PORTABLE-SINGLE-FLOAT-TO-BITS so that both of the conventions
+INTEGER-DECODE-FLOAT is allowed to use can be fed in from any host and checked, rather than
+only on a host that happens to use the other one."
+  (let ((sign-bit (if (minusp sign) #x80000000 0)))
+    ;; INTEGER-DECODE-FLOAT owes its caller only a pair whose product is the magnitude;
+    ;; whether a denormal's significand comes back normalised is up to the implementation.
+    ;; SBCL leaves it alone -- LEAST-POSITIVE-SINGLE-FLOAT is significand 1, exponent -149 --
+    ;; and CCL normalises it to significand 2^23, exponent -172. Deciding "is this a
+    ;; denormal?" by the significand's magnitude therefore reads the host's convention
+    ;; instead of the format's, which is exactly how this went wrong before: correct on SBCL,
+    ;; and on CCL it fell into the normal-number branch and wrote a wrapped exponent field.
+    ;; Normalising first and letting the biased exponent decide is true of either convention.
+    ;; The pair is pinned down only up to doubling the significand and dropping the exponent,
+    ;; so reduce it from both directions rather than assuming which end it arrived at.
+    (loop while (and (>= significand (ash 1 24)) (evenp significand))
+          do (setf significand (ash significand -1))
+             (incf exponent))
+    (loop while (< significand (ash 1 23))
+          do (setf significand (ash significand 1))
+             (decf exponent))
+    (let ((biased (+ exponent 23 127)))
+      (if (plusp biased)
+          (logior sign-bit (ash biased 23) (logand significand #x7fffff))
+          ;; Exponent field zero, and the significand shifted down to the fixed 2^-149 scale
+          ;; a denormal's fraction is measured in.
+          (logior sign-bit (ash significand (1- biased)))))))
+
 (defun %portable-single-float-to-bits (x)
   "IEEE-754 single-precision bits of X, in ANSI Common Lisp only."
   (declare (type single-float x))
   (if (zerop x)
       (if (minusp (float-sign x)) #x80000000 0)
       (multiple-value-bind (significand exponent sign) (integer-decode-float x)
-        (let ((sign-bit (if (minusp sign) #x80000000 0)))
-          (if (< significand (ash 1 23))
-              ;; A denormal. INTEGER-DECODE-FLOAT leaves its significand unnormalised --
-              ;; LEAST-POSITIVE-SINGLE-FLOAT comes back as significand 1, exponent -149 --
-              ;; so the biased-exponent arithmetic below would write a bogus non-zero
-              ;; exponent field. IEEE-754 stores a denormal as exponent field zero and a
-              ;; fraction that is the value divided by 2^-149.
-              (logior sign-bit (ash significand (+ exponent 149)))
-              (logior sign-bit
-                      (ash (logand (+ exponent 23 127) #xff) 23)
-                      (logand significand #x7fffff)))))))
+        (%float-parts-to-bits significand exponent sign))))
 
 (defun %portable-bits-to-single-float (bits)
   "The single-float whose IEEE-754 bits are BITS, in ANSI Common Lisp only."

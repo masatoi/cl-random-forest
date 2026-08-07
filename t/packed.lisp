@@ -369,3 +369,43 @@
       (ok (= v (cl-random-forest/src/packed::%portable-bits-to-single-float
                 (cl-random-forest/src/packed::single-float-to-bits v)))
           (format nil "~S: the portable decoder agrees with the fast encoder" v)))))
+
+(deftest packed-float-bits-do-not-depend-on-the-decode-convention
+  ;; INTEGER-DECODE-FLOAT owes its caller only a (significand, exponent) pair whose product
+  ;; is the magnitude. Which member of that equivalence class it picks is up to the
+  ;; implementation, and for denormals the two we run on disagree: SBCL leaves the
+  ;; significand unnormalised (LEAST-POSITIVE-SINGLE-FLOAT is 1 x 2^-149) while CCL
+  ;; normalises it (2^23 x 2^-172).
+  ;;
+  ;; The portable encoder used to decide "is this a denormal?" by asking whether the
+  ;; significand was below 2^23 -- reading the host's convention rather than the format.
+  ;; That was right on SBCL and wrong on CCL, where 5.877472e-39 encoded as 00000000: a
+  ;; denormal silently becoming zero. Only CI caught it, because on SBCL the host never
+  ;; produces the pair that breaks it.
+  ;;
+  ;; So this feeds the pairs in directly. It fails on any implementation if the convention
+  ;; ever leaks back into the arithmetic.
+  (labels ((normalised (s e)
+             "The CCL convention: significand shifted up into [2^23, 2^24)."
+             (loop while (< s (ash 1 23)) do (setf s (ash s 1)) (decf e))
+             (values s e))
+           (minimal (s e)
+             "The other extreme: significand reduced until odd."
+             (loop while (and (plusp s) (evenp s)) do (setf s (ash s -1)) (incf e))
+             (values s e)))
+    (dolist (v (list least-positive-single-float
+                     (- least-positive-single-float)
+                     (* 12345.0 least-positive-single-float)
+                     (/ least-positive-normalized-single-float 2.0)
+                     least-positive-normalized-single-float
+                     1.0 -0.5 3.14159 most-positive-single-float))
+      (multiple-value-bind (s e sign) (integer-decode-float v)
+        (let ((expected (cl-random-forest/src/packed::single-float-to-bits v)))
+          (dolist (convention (list (cons "as decoded" (list s e))
+                                    (cons "normalised" (multiple-value-list (normalised s e)))
+                                    (cons "minimal" (multiple-value-list (minimal s e)))
+                                    (cons "over-scaled" (list (ash s 5) (- e 5)))))
+            (ok (= expected
+                   (cl-random-forest/src/packed::%float-parts-to-bits
+                    (first (cdr convention)) (second (cdr convention)) sign))
+                (format nil "~S: ~A significand encodes the same" v (car convention)))))))))
