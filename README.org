@@ -189,18 +189,26 @@ For serving a trained model, =cl-random-forest/src/packed= flattens a forest int
 
 A forest you intend to prune /and/ pack must be built with =:remove-sample-indices? nil=:
 pruning turns internal nodes back into leaves without restoring their sample indices (issue
-#14), and the packed builder refuses those. =*forest*= above was built with the default
-=:remove-sample-indices? t= and was then pruned in the Global Pruning section, so packing it
-as shown below will signal a =packed-build-error= unless it is rebuilt with
-=:remove-sample-indices? nil= first.
+#14), and the packed builder refuses those. The =*forest*= built above took the default
+=:remove-sample-indices? t= and was then pruned in the Global Pruning section, so it is one
+of those and has to be rebuilt before it can be packed. An unpruned forest packs whichever
+way it was built.
 
 #+BEGIN_SRC lisp
 (ql:quickload :cl-random-forest/src/packed)
+
+;; Rebuild, because *forest* has been pruned. Skip this if yours has not been.
+(defparameter *forest*
+  (make-forest *n-class* *datamatrix* *target*
+               :n-tree 10 :bagging-ratio 1.0
+               :max-depth 5 :min-region-samples 1 :n-trial 10
+               :remove-sample-indices? nil))
 
 (defparameter *packed* (clrf.packed:build-packed-classifier *forest*))
 (defparameter *acc* (clrf.packed:make-packed-accumulator *packed*))
 
 (clrf.packed:packed-predict *packed* *datamatrix* 0 *acc*)
+;; => 0 (the same class PREDICT-FOREST gives)
 
 (clrf.packed:packed-save *packed* #p"model.packed")
 (defparameter *reloaded* (clrf.packed:packed-load #p"model.packed"))
