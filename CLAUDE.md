@@ -208,6 +208,26 @@ that leaf's class distribution would come out uniform rather than signalling (is
 default-built, unpruned forest packs fine regardless of what `:remove-sample-indices?` was
 given at construction time; `t/packed.lisp` asserts this directly.
 
+The whole walk runs at `(safety 0)`, so **every index it will follow is checked before it
+starts** -- in `check-packable` when building, and again in `packed-load` for a file the
+process did not write. Three of those checks are not obvious:
+
+- `left`/`right` must not merely be in range but must *exceed their own node index*.
+  `build-packed-topology` numbers a subtree after its root, so this holds by construction;
+  it is what makes the walk provably terminate, and without it `left[i] = i` is an in-range
+  cycle that hangs prediction with no way to recover.
+- `feature` is bounded by `datum-dim`, the training width, which is a slot on the topology
+  and a field in the file for exactly this reason. `datum-dim` is itself untrusted in a
+  file, so it is paired with `check-datamatrix-width`, which bounds it by the matrix
+  actually passed in. Composed, `feature < datum-dim <= the real column count`.
+- Each array's declared length is checked against the bytes left in the file *before* it is
+  allocated, so an inflated count is an error rather than a multi-gigabyte allocation.
+
+`check-datamatrix-width` also catches the ordinary version of that mistake -- predicting
+with a narrower dataset than the forest was trained on -- which is otherwise a silent read
+past the end of a row. It costs nothing measurable: 39-41k predictions/s on a 500-tree
+depth-10 forest either way, a spread smaller than the run-to-run noise.
+
 The design and the measurements behind it are in `docs/packed-forest-layout.md`.
 
 ## Known broken code

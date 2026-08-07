@@ -145,6 +145,7 @@ out of ACC. Contrast PACKED-PREDICT-BATCH, which leaves its accumulators unnorma
          (n-tree (packed-topology-n-tree topology)))
     (declare (type (simple-array (signed-byte 32) (*)) roots)
              (type fixnum n-class n-tree))
+    (check-datamatrix-width topology datamatrix)
     (dotimes (k n-class) (setf (aref acc k) 0.0))
     (ecase (packed-classifier-kind classifier)
       (:dense
@@ -203,6 +204,7 @@ distributions must divide each one by N-TREE itself."
          (tile (- end start)))
     (declare (type (simple-array (signed-byte 32) (*)) roots)
              (type fixnum n-class n-tree tile))
+    (check-datamatrix-width topology datamatrix)
     (dotimes (r tile)
       (dotimes (k n-class) (setf (aref accs r k) 0.0)))
     (ecase (packed-classifier-kind classifier)

@@ -22,7 +22,7 @@
 ;; the old, so the magic is a DEFPARAMETER. The other two are numbers and are fine.
 (defparameter *magic*
   #.(map '(simple-array (unsigned-byte 8) (*)) #'char-code "CLRFPACK"))
-(defconstant +version+ 1)
+(defconstant +version+ 2)
 (defconstant +byte-order-probe+ #x01020304)
 
 ;;;; Floats as bits
@@ -99,6 +99,20 @@
           (setf (aref buffer (+ (* i bytes-per) b)) (ldb (byte 8 (* 8 b)) word)))))
     (write-sequence buffer stream)))
 
+(defun check-array-fits (stream name n bits)
+  "Signal PACKED-LOAD-ERROR unless N words of BITS bits still remain in STREAM.
+
+READ-ARRAY has to size two buffers from N before it can discover that the file is shorter
+than N claims, and N is a header field a corrupt file controls outright: a 36-byte file
+declaring 4294967295 internal nodes would ask for 16 GB before reaching the short-read check.
+Comparing against the bytes actually left costs one FILE-LENGTH and forecloses that."
+  (let* ((wanted (* n (floor bits 8)))
+         (remaining (- (file-length stream) (file-position stream))))
+    (when (> wanted remaining)
+      (error 'packed-load-error
+             :detail (format nil "~A claims ~D entries, needing ~D bytes, but only ~D ~
+remain in the file" name n wanted remaining)))))
+
 (defun read-array (stream n bits element-type decoder)
   "Read N little-endian words of BITS bits, DECODER mapping integer to element."
   (let* ((bytes-per (floor bits 8))
@@ -138,27 +152,59 @@ the check is stated explicitly rather than left as an accident of the encoding."
     (error 'packed-load-error
            :detail (format nil "header ~A must be positive, got ~D" name value))))
 
-(defun check-child-reference (array-name index value n-internal n-leaf)
+(defun check-child-reference (array-name index value n-internal n-leaf &key parent)
   "Signal PACKED-LOAD-ERROR unless VALUE is a valid child reference at ARRAY-NAME[INDEX]:
 either an internal-node index in [0, N-INTERNAL), or the BUILD-PACKED-TOPOLOGY encoding of a
-leaf, `~L` for some leaf L in [0, N-LEAF)."
+leaf, `~L` for some leaf L in [0, N-LEAF).
+
+When PARENT is the index of the node VALUE is a child of, an internal VALUE must also exceed
+it. Bounds alone do not make the walk terminate: PACKED-LEAF loops while the node index is
+non-negative, so `left[i] = i` -- in range, and a cycle -- hangs it at (safety 0). Requiring
+each step to move forward through a bounded array makes termination provable instead, which
+is exactly the numbering BUILD-PACKED-TOPOLOGY produces and now checks."
   (if (minusp value)
       (let ((leaf (lognot value)))
         (unless (< -1 leaf n-leaf)
           (error 'packed-load-error
                  :detail (format nil "~A[~D] = ~D references leaf ~D, outside [0,~D)"
                                  array-name index value leaf n-leaf))))
-      (unless (< value n-internal)
-        (error 'packed-load-error
-               :detail (format nil "~A[~D] = ~D, outside the internal-node range [0,~D)"
-                               array-name index value n-internal)))))
+      (progn
+        (unless (< value n-internal)
+          (error 'packed-load-error
+                 :detail (format nil "~A[~D] = ~D, outside the internal-node range [0,~D)"
+                                 array-name index value n-internal)))
+        (when (and parent (<= value parent))
+          (error 'packed-load-error
+                 :detail (format nil "~A[~D] = ~D does not exceed its parent index ~D, so ~
+the walk could revisit a node and never terminate" array-name index value parent))))))
+
+(defun validate-feature-array (n-internal datum-dim feature)
+  "Signal PACKED-LOAD-ERROR unless every FEATURE entry is a column of a DATUM-DIM datamatrix.
+
+PACKED-LEAF uses FEATURE[node] as the second subscript of the datamatrix with bounds checking
+off, so an unchecked entry from a corrupt file is a read at an arbitrary offset from the
+array. CHECK-PACKABLE applies the same bound when building; the file carries DATUM-DIM so
+that the bound survives the round trip.
+
+DATUM-DIM is itself a number from the file, so this check alone would be vacuous against a
+corruption that inflated both. It is half of a pair: this bounds FEATURE by the claimed
+width, and CHECK-DATAMATRIX-WIDTH bounds the claimed width by the matrix actually handed to
+the walk. Composed, feature < datum-dim <= the real column count, and an inflated DATUM-DIM
+fails closed at the first prediction rather than reading out of bounds."
+  (dotimes (i n-internal)
+    (unless (< (aref feature i) datum-dim)
+      (error 'packed-load-error
+             :detail (format nil "feature[~D] = ~D, outside the datamatrix's [0,~D) columns"
+                             i (aref feature i) datum-dim)))))
 
 (defun validate-topology-arrays (n-internal n-leaf n-tree left right roots tree-leaf-offsets)
   "Signal PACKED-LOAD-ERROR if LEFT, RIGHT, ROOTS or TREE-LEAF-OFFSETS are not internally
 consistent with the header counts N-INTERNAL, N-LEAF and N-TREE."
   (dotimes (i n-internal)
-    (check-child-reference "left" i (aref left i) n-internal n-leaf)
-    (check-child-reference "right" i (aref right i) n-internal n-leaf))
+    (check-child-reference "left" i (aref left i) n-internal n-leaf :parent i)
+    (check-child-reference "right" i (aref right i) n-internal n-leaf :parent i))
+  ;; A root has no parent to exceed; it only has to be in range. Termination still follows,
+  ;; since every step after it moves strictly forward.
   (dotimes (tree n-tree)
     (check-child-reference "roots" tree (aref roots tree) n-internal n-leaf))
   (unless (zerop (aref tree-leaf-offsets 0))
@@ -232,6 +278,7 @@ or shifted past the point the first magic check looks at."
       (write-u32 (packed-topology-n-internal topology) s)
       (write-u32 n-leaf s)
       (write-u32 n-class s)
+      (write-u32 (packed-topology-datum-dim topology) s)
       (write-array (packed-topology-feature topology) s 32 #'identity)
       (write-array (packed-topology-threshold topology) s 32 #'single-float-to-bits)
       (write-array (packed-topology-left topology) s 32 #'u32-of-s32)
@@ -256,10 +303,13 @@ or shifted past the point the first magic check looks at."
 (defun packed-load (pathname)
   "Read a packed classifier written by PACKED-SAVE.
 
-Every array is checked against the header counts before this returns: LEFT, RIGHT, ROOTS,
+Every array is checked against the header counts before this returns: FEATURE against the
+saved datamatrix width, LEFT, RIGHT and ROOTS for range and for forward motion, plus
 TREE-LEAF-OFFSETS and, for a CSR file, OFFSETS and CLASS. A corrupt file the topology
 traversal or the CSR prediction loop would otherwise read or write out of bounds at
-(safety 0) instead signals PACKED-LOAD-ERROR here."
+(safety 0) -- or walk in a cycle forever -- instead signals PACKED-LOAD-ERROR here. Each
+array's declared length is also checked against the bytes actually remaining before it is
+allocated, so an inflated count cannot turn into a huge allocation."
   (with-open-file (s pathname :direction :input :element-type '(unsigned-byte 8))
     (let ((magic (make-array (length *magic*) :element-type '(unsigned-byte 8))))
       (unless (and (= (read-sequence magic s) (length *magic*))
@@ -278,35 +328,54 @@ traversal or the CSR prediction loop would otherwise read or write out of bounds
            (n-tree (read-u32 s))
            (n-internal (read-u32 s))
            (n-leaf (read-u32 s))
-           (n-class (read-u32 s)))
+           (n-class (read-u32 s))
+           (datum-dim (read-u32 s)))
       (check-header-count "n-tree" n-tree :positive t)
       (check-header-count "n-internal" n-internal)
       (check-header-count "n-leaf" n-leaf)
       (check-header-count "n-class" n-class :positive t)
+      (check-header-count "datum-dim" datum-dim :positive t)
+      (check-array-fits s "feature" n-internal 32)
       (let* ((feature (read-array s n-internal 32 '(unsigned-byte 32) #'identity))
-             (threshold (read-array s n-internal 32 'single-float #'bits-to-single-float))
-             (left (read-array s n-internal 32 '(signed-byte 32) #'s32-of-u32))
-             (right (read-array s n-internal 32 '(signed-byte 32) #'s32-of-u32))
-             (roots (read-array s n-tree 32 '(signed-byte 32) #'s32-of-u32))
-             (tree-leaf-offsets (read-array s n-tree 32 '(unsigned-byte 32) #'identity)))
+             (threshold (progn (check-array-fits s "threshold" n-internal 32)
+                               (read-array s n-internal 32 'single-float
+                                           #'bits-to-single-float)))
+             (left (progn (check-array-fits s "left" n-internal 32)
+                          (read-array s n-internal 32 '(signed-byte 32) #'s32-of-u32)))
+             (right (progn (check-array-fits s "right" n-internal 32)
+                           (read-array s n-internal 32 '(signed-byte 32) #'s32-of-u32)))
+             (roots (progn (check-array-fits s "roots" n-tree 32)
+                           (read-array s n-tree 32 '(signed-byte 32) #'s32-of-u32)))
+             (tree-leaf-offsets (progn (check-array-fits s "tree-leaf-offsets" n-tree 32)
+                                       (read-array s n-tree 32 '(unsigned-byte 32)
+                                                   #'identity))))
         (validate-topology-arrays n-internal n-leaf n-tree left right roots
                                   tree-leaf-offsets)
+        (validate-feature-array n-internal datum-dim feature)
         (let ((topology
                 (%make-packed-topology
                  :n-tree n-tree :n-internal n-internal :n-leaf n-leaf
+                 :datum-dim datum-dim
                  :feature feature :threshold threshold :left left :right right
                  :roots roots :tree-leaf-offsets tree-leaf-offsets)))
           (if csr
-              (let* ((offsets (read-array s (1+ n-leaf) 32 '(unsigned-byte 32) #'identity))
+              (let* ((offsets (progn (check-array-fits s "csr offsets" (1+ n-leaf) 32)
+                                     (read-array s (1+ n-leaf) 32 '(unsigned-byte 32)
+                                                 #'identity)))
                      (nnz (aref offsets n-leaf))
-                     (class (read-array s nnz 16 '(unsigned-byte 16) #'identity))
-                     (probability (read-array s nnz 32 'single-float #'bits-to-single-float)))
+                     (class (progn (check-array-fits s "csr class" nnz 16)
+                                   (read-array s nnz 16 '(unsigned-byte 16) #'identity)))
+                     (probability (progn (check-array-fits s "csr probability" nnz 32)
+                                         (read-array s nnz 32 'single-float
+                                                     #'bits-to-single-float))))
                 (validate-csr-arrays n-leaf n-class offsets class probability)
                 (%make-packed-classifier
                  :topology topology :n-class n-class :kind :csr
                  :offsets offsets :class class :probability probability))
-              (let ((flat (read-array s (* (max n-leaf 1) n-class) 32 'single-float
-                                      #'bits-to-single-float))
+              (let ((flat (progn
+                            (check-array-fits s "dense table" (* (max n-leaf 1) n-class) 32)
+                            (read-array s (* (max n-leaf 1) n-class) 32 'single-float
+                                        #'bits-to-single-float)))
                     (table (make-array (list (max n-leaf 1) n-class)
                                        :element-type 'single-float)))
                 (dotimes (row (max n-leaf 1))

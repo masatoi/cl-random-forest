@@ -266,7 +266,7 @@
               (packed-load-error () t))
             "a truncated file is rejected"))
       (uiop:with-temporary-file (:pathname path :type "packed")
-        ;; Corrupt N-CLASS, the last of the header's seven u32 fields, at byte offset
+        ;; Corrupt N-CLASS, the seventh of the header's eight u32 fields, at byte offset
         ;; 8 + 4*6 = 32. Decrementing it below the real class count is exactly what the
         ;; reviewer demonstrated slipping through unchecked: the header positivity check
         ;; still passes, and the topology is untouched, but a CSR file's CLASS array now
@@ -282,29 +282,67 @@
         (ok (handler-case (progn (packed-load path) nil)
               (packed-load-error () t))
             "a corrupted n-class is rejected"))
-      (uiop:with-temporary-file (:pathname path :type "packed")
-        (packed-save (build-packed-classifier forest) path)
-        ;; Corrupt one entry of LEFT. The topology arrays begin right after the header, at
-        ;; byte offset 8 + 4*7 = 36, and FEATURE comes first, so LEFT starts at
-        ;; 36 + 4*n-internal*2. N-INTERNAL is read back from the header (offset 24) rather
-        ;; than hardcoded, since the exact node count is an artifact of training the
-        ;; fixture forest, not something this test pins.
-        (let* ((n-internal (with-open-file (s path :element-type '(unsigned-byte 8))
-                             (file-position s 24)
-                             (+ (read-byte s)
-                                (ash (read-byte s) 8)
-                                (ash (read-byte s) 16)
-                                (ash (read-byte s) 24))))
-               (left-start (+ 36 (* 4 n-internal 2))))
-          (with-open-file (s path :direction :io :if-exists :overwrite
-                                  :element-type '(unsigned-byte 8))
-            (file-position s left-start)
-            ;; A positive value far larger than any real internal-node count, written
-            ;; little-endian.
-            (write-byte #xff s) (write-byte #xff s) (write-byte #xff s) (write-byte #x7f s)))
-        (ok (handler-case (progn (packed-load path) nil)
-              (packed-load-error () t))
-            "a corrupted left entry is rejected")))))
+      (flet ((clobber (payload offset bytes)
+               "Save FOREST, overwrite BYTES at OFFSET, and return T if the load is refused."
+               (uiop:with-temporary-file (:pathname path :type "packed")
+                 (packed-save (build-packed-classifier forest :payload payload) path)
+                 (with-open-file (s path :direction :io :if-exists :overwrite
+                                         :element-type '(unsigned-byte 8))
+                   (file-position s offset)
+                   (dolist (b bytes) (write-byte b s)))
+                 (handler-case (progn (packed-load path) nil)
+                   (packed-load-error () t))))
+             (u32-at (offset)
+               "Read the u32 the saved header holds at OFFSET, to avoid hardcoding counts."
+               (uiop:with-temporary-file (:pathname path :type "packed")
+                 (packed-save (build-packed-classifier forest) path)
+                 (with-open-file (s path :element-type '(unsigned-byte 8))
+                   (file-position s offset)
+                   (+ (read-byte s) (ash (read-byte s) 8)
+                      (ash (read-byte s) 16) (ash (read-byte s) 24))))))
+        ;; The topology arrays begin right after the header's eight u32 fields, at byte
+        ;; offset 8 + 4*8 = 40. FEATURE comes first and THRESHOLD second, so LEFT starts at
+        ;; 40 + 4*n-internal*2. N-INTERNAL is read back from the header (offset 24) rather
+        ;; than hardcoded, since the exact node count is an artifact of training the fixture
+        ;; forest, not something this test pins.
+        (let* ((n-internal (u32-at 24))
+               (feature-start 40)
+               (left-start (+ 40 (* 4 n-internal 2))))
+          (ok (clobber :auto left-start '(#xff #xff #xff #x7f))
+              "a corrupted left entry is rejected")
+          ;; A node whose left child is itself. Every bound holds -- 0 is a perfectly good
+          ;; internal-node index -- so only the forward-motion rule catches it. Without that
+          ;; rule PACKED-LEAF spins in this node forever at (safety 0), which is why the
+          ;; check exists: a hang is not something a caller can recover from.
+          (ok (clobber :auto left-start '(0 0 0 0))
+              "a left entry pointing at its own node is rejected")
+          ;; A feature index past the datamatrix's columns. Nothing about the tree structure
+          ;; is wrong here; the walk would simply read off the end of a row.
+          (ok (clobber :auto feature-start '(#xff #xff #xff #xff))
+              "a feature index outside the trained datamatrix width is rejected")
+          ;; An inflated N-INTERNAL. READ-ARRAY has to size its buffers from this count
+          ;; before it can notice the file is too short, so without the remaining-length
+          ;; check this asks for 16 GB and dies of heap exhaustion rather than signalling.
+          ;; The assertion is specifically that it is a PACKED-LOAD-ERROR.
+          (ok (clobber :auto 24 '(#xff #xff #xff #xff))
+              "a count larger than the file is rejected before anything is allocated"))))))
+
+(deftest packed-refuses-a-datamatrix-narrower-than-the-forest
+  ;; FEATURE is bounded by the training width, and the walk reads the datamatrix at
+  ;; (safety 0), so a narrower matrix is an out-of-bounds read rather than an error. This is
+  ;; reachable with a perfectly good in-memory model -- no file involved -- by predicting
+  ;; with a different dataset than the forest was trained on.
+  (with-serial-kernel
+    (let* ((forest (synthetic-forest))
+           (classifier (build-packed-classifier forest))
+           (dim (packed-topology-datum-dim (packed-classifier-topology classifier)))
+           (acc (make-packed-accumulator classifier))
+           (narrow (make-array (list 1 (1- dim)) :element-type 'single-float
+                                                 :initial-element 0.0)))
+      (ok (plusp dim) "the packed topology remembers the training width")
+      (ok (handler-case (progn (packed-predict classifier narrow 0 acc) nil)
+            (error () t))
+          "predicting from a too-narrow datamatrix signals instead of reading past the row"))))
 
 (deftest packed-float-bits-round-trip
   ;; The fast paths exist per implementation; the portable fallback is the reference. They

@@ -15,6 +15,7 @@
            #:packed-topology-n-tree
            #:packed-topology-n-internal
            #:packed-topology-n-leaf
+           #:packed-topology-datum-dim
            #:packed-topology-feature
            #:packed-topology-threshold
            #:packed-topology-left
@@ -25,6 +26,7 @@
            #:build-packed-topology
            #:packed-leaf
            #:packed-leaf-indices
+           #:check-datamatrix-width
            #:packed-build-error
            #:packed-build-error-detail))
 
@@ -48,10 +50,21 @@ that would be frozen into the model silently."))
 A leaf is encoded as a negative child index, `~leaf`, so a walk's continuation test is its
 leaf test and a leaf costs no extra read. Leaf numbers are
 TREE-LEAF-OFFSETS[tree] + the tree's own leaf index, which is by construction the index
-Global Refinement uses."
+Global Refinement uses.
+
+LEFT and RIGHT hold, for every internal node, a child index strictly greater than the node's
+own index: EMIT takes its slot before recursing, so a subtree is always numbered after its
+root. Nothing in the walk depends on that, but it makes termination structural rather than
+circumstantial -- each step moves strictly forward through a bounded array -- and PACKED-LOAD
+rechecks it on a file it did not write, where a cycle would otherwise hang the walk.
+
+DATUM-DIM is the width of the datamatrix the forest was trained on. FEATURE indexes a
+datamatrix column at (safety 0), so it is bounded by DATUM-DIM at build time, and keeping the
+bound is what lets PACKED-LOAD and the prediction entry points check it again later."
   (n-tree 0 :type fixnum)
   (n-internal 0 :type fixnum)
   (n-leaf 0 :type fixnum)
+  (datum-dim 0 :type fixnum)
   (feature (make-array 0 :element-type '(unsigned-byte 32))
            :type (simple-array (unsigned-byte 32) (*)))
   (threshold (make-array 0 :element-type 'single-float)
@@ -123,6 +136,21 @@ with :remove-sample-indices? nil (issue #14)" depth indices))))))))
       (walk (dtree-root dtree)))
     (values internal leaves)))
 
+(defun check-forward-numbering (n-internal left right)
+  "Signal PACKED-BUILD-ERROR unless every internal child index exceeds its parent's.
+
+EMIT produces this by construction. Checking it here costs one pass and turns a later change
+to the numbering -- breadth-first, or anything cache-conscious -- into an error at build time
+with this message, rather than into files PACKED-LOAD starts rejecting for no visible reason."
+  (dotimes (i n-internal)
+    (dolist (side (list (cons "left" (aref left i)) (cons "right" (aref right i))))
+      (let ((child (cdr side)))
+        (when (and (not (minusp child)) (<= child i))
+          (error 'packed-build-error
+                 :detail (format nil "~A[~D] = ~D does not exceed its parent index; the ~
+node numbering is no longer depth-first, and PACKED-LOAD's termination check assumes it is"
+                                 (car side) i child)))))))
+
 (defun build-packed-topology (forest)
   "Flatten FOREST's structure into arrays.
 
@@ -171,10 +199,30 @@ because the traversal runs at (safety 0)."
                                  (incf local-leaf))))))
                    (setf (aref roots tree) (emit (dtree-root dtree))))
                  (incf leaf-base local-leaf)))
+      (check-forward-numbering n-internal left right)
       (%make-packed-topology
        :n-tree n-tree :n-internal n-internal :n-leaf n-leaf
+       :datum-dim (forest-datum-dim forest)
        :feature feature :threshold threshold :left left :right right
        :roots roots :tree-leaf-offsets offsets))))
+
+(declaim (inline check-datamatrix-width))
+(defun check-datamatrix-width (topology datamatrix)
+  "Signal an error unless DATAMATRIX is at least as wide as the forest was trained on.
+
+PACKED-LEAF reads DATAMATRIX[datum, FEATURE[node]] at (safety 0), and FEATURE is bounded only
+by the training width. Hand the walk a narrower matrix -- the easy mistake, predicting with a
+different dataset than you trained on -- and it reads past the row rather than complaining.
+This is one comparison against several hundred tree walks per call."
+  (declare (optimize (speed 3) (safety 0))
+           (type packed-topology topology)
+           (type (simple-array single-float (* *)) datamatrix))
+  (let ((dim (packed-topology-datum-dim topology))
+        (width (array-dimension datamatrix 1)))
+    (declare (type fixnum dim width))
+    (when (< width dim)
+      (error "this model was packed from a forest trained on ~D columns, but the datamatrix ~
+has ~D" dim width))))
 
 (declaim (inline packed-leaf))
 (defun packed-leaf (topology datamatrix datum-index root)
@@ -211,6 +259,7 @@ because the traversal runs at (safety 0)."
         (n-tree (packed-topology-n-tree topology)))
     (declare (type (simple-array (signed-byte 32) (*)) roots)
              (type fixnum n-tree))
+    (check-datamatrix-width topology datamatrix)
     (dotimes (tree n-tree out)
       (setf (aref out tree)
             (packed-leaf topology datamatrix datum-index (aref roots tree))))))
