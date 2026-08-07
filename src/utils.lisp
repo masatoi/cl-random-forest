@@ -1,6 +1,22 @@
 (defpackage :cl-random-forest/src/utils
   (:use :cl)
   (:nicknames :cl-random-forest.utils :clrf.utils)
+  ;; LPARALLEL, ALEXANDRIA and SVMFORMAT are all used below (the parallelisation macros,
+  ;; PUSH-NTIMES's own macro-defining code, and the libsvm-format readers, respectively),
+  ;; but none of them were named here. Naming them is what tells ASDF's package-inferred-
+  ;; system to load them: without this, loading any system that reaches this file without
+  ;; going through the top-level cl-random-forest system -- cl-random-forest/src/packed,
+  ;; for instance -- fails on a cold cache with "Package LPARALLEL does not exist", then,
+  ;; once that is fixed, "Package SVMFORMAT does not exist".
+  ;;
+  ;; SVMFORMAT needs one more thing beyond this clause: it is a nickname of the
+  ;; CL-LIBSVM-FORMAT package, and package-inferred-system derives a dependency's system
+  ;; name by downcasing the package name, which would look for a nonexistent "svmformat"
+  ;; system. cl-random-forest.asd registers the real mapping with
+  ;; ASDF:REGISTER-SYSTEM-PACKAGES before this file is ever read.
+  (:import-from #:lparallel #:*kernel*)
+  (:import-from #:alexandria #:with-gensyms #:once-only)
+  (:import-from #:svmformat #:parse-file)
   (:export #:random-uniform
            #:random-normal
            #:dotimes/pdotimes

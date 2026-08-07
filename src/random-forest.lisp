@@ -1,6 +1,41 @@
 (defpackage :cl-random-forest/src/random-forest
   (:use #:cl
         #:cl-random-forest/src/utils)
+  ;; CLOL, CLOL.VECTOR and ALEXANDRIA are all referenced qualified below (CLOL:MAKE-ONE-VS-REST
+  ;; and so on) but were never named here, so ASDF's package-inferred-system never loaded them
+  ;; on a path that does not go through the top-level cl-random-forest system -- exactly the
+  ;; same defect fixed in src/utils.lisp's DEFPACKAGE, just one file further down the chain that
+  ;; cl-random-forest/src/packed pulls in. CLOL and CLOL.VECTOR need the extra
+  ;; ASDF:REGISTER-SYSTEM-PACKAGES mapping in cl-random-forest.asd for the same reason SVMFORMAT
+  ;; does: both are nicknames of packages provided by CL-ONLINE-LEARNING, not systems of their
+  ;; own. Importing these symbols does not change how the code below reads or behaves -- they
+  ;; stay qualified at every call site -- it only tells ASDF what to load first.
+  (:import-from #:clol
+                #:copy-learner
+                #:make-one-vs-rest
+                #:make-sparse-arow
+                #:make-sparse-rls
+                #:one-vs-rest-predict
+                #:sparse-arow-predict
+                #:sparse-arow-update
+                #:sparse-rls-predict
+                #:sparse-rls-update
+                #:one-vs-rest-input-dimension
+                #:one-vs-rest-learner-activate
+                #:one-vs-rest-learner-bias
+                #:one-vs-rest-learners-vector
+                #:one-vs-rest-learner-update
+                #:one-vs-rest-learner-weight
+                #:one-vs-rest-n-class
+                #:sparse-arow-input-dimension
+                #:sparse-arow-weight)
+  (:import-from #:clol.vector
+                #:make-sparse-vector
+                #:sparse-vector-index-vector
+                #:sparse-vector-value-vector)
+  (:import-from #:alexandria
+                #:iota
+                #:positive-integer)
   (:export #:make-dtree
            #:predict-dtree
            #:test-dtree

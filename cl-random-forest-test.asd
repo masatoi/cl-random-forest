@@ -65,6 +65,14 @@
              (unless (symbol-call :rove :run c)
                (error "Tests failed."))))
 
+(defsystem "cl-random-forest-test/packed"
+  :description "Tests for the packed inference representation"
+  :depends-on ("rove" "cl-random-forest-test/fixture" "cl-random-forest/src/packed")
+  :components ((:module "t" :components ((:file "packed"))))
+  :perform (test-op (o c) (declare (ignore o))
+             (unless (symbol-call :rove :run c)
+               (error "Tests failed."))))
+
 (defsystem "cl-random-forest-test"
   :author "Satoshi Imai"
   :license "MIT Licence"
@@ -76,7 +84,8 @@
                "cl-random-forest-test/refinement"
                "cl-random-forest-test/parallel"
                "cl-random-forest-test/regression"
-               "cl-random-forest-test/pruning")
+               "cl-random-forest-test/pruning"
+               "cl-random-forest-test/packed")
   ;; NOTE: This system has no components of its own, so rove's SYSTEM-SUITES would
   ;; return an empty list and (rove:run c) would silently report zero tests.
   ;; The feature systems must be listed explicitly.
@@ -89,5 +98,6 @@
                                     "cl-random-forest-test/refinement"
                                     "cl-random-forest-test/parallel"
                                     "cl-random-forest-test/regression"
-                                    "cl-random-forest-test/pruning"))
+                                    "cl-random-forest-test/pruning"
+                                    "cl-random-forest-test/packed"))
                (error "Tests failed."))))

@@ -59,8 +59,9 @@ Tests are split into feature systems, each of which can be run on its own:
 | `cl-random-forest-test/parallel` | parallelized training accuracy (4, SBCL only) |
 | `cl-random-forest-test/regression` | univariate regression behaviour (5) |
 | `cl-random-forest-test/pruning` | global pruning behaviour (5) |
+| `cl-random-forest-test/packed` | packed inference representation (11) |
 
-`cl-random-forest-test` is the aggregate that runs all seven.
+`cl-random-forest-test` is the aggregate that runs all eight.
 `cl-random-forest-test/fixture` holds the shared dataset loaders and helpers and has no tests.
 
 Load the feature system first (`ql:quickload` or `asdf:load-system`), then:
@@ -71,7 +72,13 @@ Load the feature system first (`ql:quickload` or `asdf:load-system`), then:
 ```
 
 There is no lint step. CI (`.github/workflows/ci.yml`) runs the matrix
-{sbcl-bin, ccl-bin} × {ubuntu-latest, macOS-latest}.
+{sbcl-bin, ccl-bin} × {ubuntu-latest, macOS-latest}, less ccl-bin on macOS, which the
+workflow excludes because macOS CCL binaries are no longer distributed — three jobs, not
+four. Roswell has no ccl-bin for **ARM64 Linux** either, so on an aarch64 development
+machine the CCL half of the matrix cannot be reproduced locally at all and CI is the only
+place it runs. Treat a green local suite as evidence about SBCL only: CCL does not check
+type declarations, and its `integer-decode-float` normalises a denormal's significand where
+SBCL leaves it alone — both have produced CI-only failures in this repository.
 
 Test/example caveats:
 - `cl-random-forest-test/regression`, `.../pruning`, and the seven synthetic tests in
@@ -79,6 +86,7 @@ Test/example caveats:
   and three `refine-learner-process-*`) need no network: they use
   `cl-random-forest-test/fixture`'s deterministic synthetic data, or build their own.
   Everything else downloads datasets.
+- `cl-random-forest-test/packed` uses the fixture's synthetic data and needs no network.
 - Of the regression and pruning suites' ten tests, seven are **property assertions**, not
   pinned accuracy numbers, and three deliberately pin bugs that are still open: `regression-refine-learner-default-gamma-diverges`
   (issue #16), `pruning-strands-leaves-without-sample-indices` (issue #14) and
@@ -184,6 +192,49 @@ refine learner before training again.
 `push-ntimes` in `src/utils.lisp` expand to a runtime `(if lparallel:*kernel* ...)`, so setting
 the kernel to `nil` restores serial execution with no recompilation. Parallelized:
 `make-forest`, `make-regression-forest`, `make-refine-dataset`, `train-refine-learner`.
+
+### Packed inference
+
+`src/packed/` is a separate system, `cl-random-forest/src/packed`, that the core does not
+depend on and the facade does not re-export. Load it explicitly:
+
+```lisp
+(ql:quickload :cl-random-forest/src/packed)
+```
+
+It flattens a trained forest into arrays for inference: 5-8x faster than `predict-forest`,
+reentrant where `predict-forest` is not, and serialisable. It is a derived read-only view --
+training, pruning, feature importance and reconstruction all keep using the `node` structs.
+
+Two things to know. A packed model is a snapshot: prune the forest and the packed copy goes
+on predicting with the old structure, silently. And `build-packed-topology` refuses a forest
+that has been *pruned*: `pruning!`'s `delete-children!` turns an already-split node -- whose
+sample indices were nil'd when it was split -- back into a leaf without restoring them, so
+that leaf's class distribution would come out uniform rather than signalling (issue #14). A
+default-built, unpruned forest packs fine regardless of what `:remove-sample-indices?` was
+given at construction time; `t/packed.lisp` asserts this directly.
+
+The whole walk runs at `(safety 0)`, so **every index it will follow is checked before it
+starts** -- in `check-packable` when building, and again in `packed-load` for a file the
+process did not write. Three of those checks are not obvious:
+
+- `left`/`right` must not merely be in range but must *exceed their own node index*.
+  `build-packed-topology` numbers a subtree after its root, so this holds by construction;
+  it is what makes the walk provably terminate, and without it `left[i] = i` is an in-range
+  cycle that hangs prediction with no way to recover.
+- `feature` is bounded by `datum-dim`, the training width, which is a slot on the topology
+  and a field in the file for exactly this reason. `datum-dim` is itself untrusted in a
+  file, so it is paired with `check-datamatrix-width`, which bounds it by the matrix
+  actually passed in. Composed, `feature < datum-dim <= the real column count`.
+- Each array's declared length is checked against the bytes left in the file *before* it is
+  allocated, so an inflated count is an error rather than a multi-gigabyte allocation.
+
+`check-datamatrix-width` also catches the ordinary version of that mistake -- predicting
+with a narrower dataset than the forest was trained on -- which is otherwise a silent read
+past the end of a row. It costs nothing measurable: 39-41k predictions/s on a 500-tree
+depth-10 forest either way, a spread smaller than the run-to-run noise.
+
+The design and the measurements behind it are in `docs/packed-forest-layout.md`.
 
 ## Known broken code
 
